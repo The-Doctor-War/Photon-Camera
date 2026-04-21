@@ -53,6 +53,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import androidx.media3.ui.AspectRatioFrameLayout
 import coil.request.ImageRequest
+import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.viewmodel.GalleryTab
 import kotlinx.coroutines.Dispatchers
@@ -221,12 +222,13 @@ fun GalleryDetailScreen(
                 title = {
                     Text(
                         text = "${pagerState.currentPage + 1} / ${photos.size}",
+                        maxLines = 1,
                         color = Color.White
                     )
                 },
                 navigationIcon = {
                     if (!isExpanded) {
-                        IconButton(onClick = onBack) {
+                        IconButton(onClick = onBack, modifier = Modifier.autoRotate()) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(R.string.back),
@@ -274,7 +276,8 @@ fun GalleryDetailScreen(
                                     }
                                 }
                             },
-                            enabled = !isRefreshing
+                            enabled = !isRefreshing,
+                            modifier = Modifier.autoRotate()
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
@@ -289,7 +292,7 @@ fun GalleryDetailScreen(
                         }
                     }
                     if (currentPhoto != null && currentPhoto.isImage && currentPhoto.isBurstPhoto) {
-                        IconButton(onClick = { onViewBurst?.invoke(currentPhoto.id) }) {
+                        IconButton(onClick = { onViewBurst?.invoke(currentPhoto.id) }, modifier = Modifier.autoRotate()) {
                             Icon(
                                 imageVector = Icons.Default.BurstMode,
                                 contentDescription = "查看连拍照片", // 连拍照片
@@ -315,7 +318,7 @@ fun GalleryDetailScreen(
                             )
                         }
                     }
-                    IconButton(onClick = { showInfoDialog = true }) {
+                    IconButton(onClick = { showInfoDialog = true }, modifier = Modifier.autoRotate()) {
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = stringResource(if (currentPhoto?.isVideo == true) R.string.video_info else R.string.photo_info),
@@ -346,6 +349,7 @@ fun GalleryDetailScreen(
                         modifier = Modifier
                             .size(56.dp)
                             .background(Color.White.copy(alpha = 0.1f), CircleShape)
+                            .autoRotate()
                     ) {
                         if (isSharing) {
                             CircularProgressIndicator(
@@ -373,6 +377,7 @@ fun GalleryDetailScreen(
                             modifier = Modifier
                                 .size(56.dp)
                                 .background(Color.White.copy(alpha = 0.1f), CircleShape)
+                                .autoRotate()
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
@@ -389,6 +394,7 @@ fun GalleryDetailScreen(
                             modifier = Modifier
                                 .size(56.dp)
                                 .background(Color.White.copy(alpha = 0.1f), CircleShape)
+                                .autoRotate()
                         ) {
                             if (isSaving) {
                                 CircularProgressIndicator(
@@ -412,6 +418,7 @@ fun GalleryDetailScreen(
                         modifier = Modifier
                             .size(56.dp)
                             .background(Color.Red.copy(alpha = 0.2f), CircleShape)
+                            .autoRotate()
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
@@ -796,7 +803,7 @@ private fun VideoDetailPlayer(
             it.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             it.isVisible = true
         },
-        modifier = modifier
+        modifier = modifier.autoRotate(matchParentSize = true)
     )
 }
 
@@ -889,7 +896,7 @@ private fun ZoomableImage(
                 contentDescription = photo.displayName,
                 contentScale = ContentScale.Fit,
                 state = zoomableState,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().autoRotate(matchParentSize = true)
             )
         }
 
@@ -906,7 +913,7 @@ private fun ZoomableImage(
                 contentDescription = photo.displayName,
                 contentScale = ContentScale.Fit,
                 state = zoomableState,
-                modifier = Modifier.fillMaxSize().alpha(hdrAlpha)
+                modifier = Modifier.fillMaxSize().alpha(hdrAlpha).autoRotate(matchParentSize = true)
             )
         }
 
@@ -968,6 +975,6 @@ fun MotionPhotoPlayer(
             it.isVisible = isPlaying
             it.alpha = if (isReadyToShow) 1f else 0f
         },
-        modifier = modifier
+        modifier = modifier.autoRotate(matchParentSize = true)
     )
 }
