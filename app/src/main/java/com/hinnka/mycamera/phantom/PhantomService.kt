@@ -103,6 +103,7 @@ import com.hinnka.mycamera.livephoto.GoogleLivePhotoCreator
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.livephoto.VivoLivePhotoCreator
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
+import com.hinnka.mycamera.lut.groupLutsForDisplay
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -741,36 +742,18 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                             val currentLutId by currentLutIdFlow.collectAsState(initial = null)
                             val listState = rememberLazyListState()
                             val builtInText = stringResource(R.string.built_in)
-                            val customText = stringResource(R.string.custom)
                             val uncategorizedText = stringResource(R.string.uncategorized)
                             val groupedLuts = remember(
                                 availableLuts,
                                 categoryOrder,
                                 builtInText,
-                                customText,
                                 uncategorizedText
                             ) {
-                                val grouped = availableLuts.groupBy { lut ->
-                                        when {
-                                            lut.category.isNotEmpty() -> lut.category
-                                            lut.isBuiltIn -> builtInText
-                                            !lut.isBuiltIn -> customText
-                                            else -> uncategorizedText
-                                        }
-                                    }
-                                grouped.entries.sortedWith(
-                                    compareBy<Map.Entry<String, List<com.hinnka.mycamera.lut.LutInfo>>> { entry ->
-                                        val title = entry.key
-                                        when (title) {
-                                            builtInText -> -2
-                                            customText -> -1
-                                            uncategorizedText -> Int.MAX_VALUE - 1
-                                            else -> {
-                                                val index = categoryOrder.indexOf(title)
-                                                if (index == -1) Int.MAX_VALUE else index
-                                            }
-                                        }
-                                    }.thenBy { it.key }
+                                groupLutsForDisplay(
+                                    luts = availableLuts,
+                                    categoryOrder = categoryOrder,
+                                    builtInText = builtInText,
+                                    uncategorizedText = uncategorizedText
                                 )
                             }
                             val selectedIndex = remember(groupedLuts, currentLutId) {

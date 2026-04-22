@@ -410,6 +410,17 @@
     <string name="restore_success">Restore completed successfully. Please restart the app.</string>
     <string name="restore_failed">Restore failed</string>
     <string name="filter_management_title">LUT Management</string>
+    <string name="apply_lut_title">Apply LUT</string>
+    <string name="apply_lut_processing">Applying LUT...</string>
+    <string name="apply_lut_processing_progress">Applying LUT... (%1$d/%2$d)</string>
+    <string name="apply_lut_processing_progress_detail">Processing photo %1$d of %2$d</string>
+    <string name="apply_lut_success">Applied %1$s</string>
+    <string name="apply_lut_success_multiple">Applied %2$s to %1$d photos</string>
+    <string name="apply_lut_failed">Failed to apply LUT</string>
+    <string name="apply_lut_multi_summary">%1$d photos</string>
+    <string name="apply_lut_permission_title">File Access Required</string>
+    <string name="apply_lut_permission_message">Applying LUT from shared images requires file management access. Please grant access for this app first.</string>
+    <string name="apply_lut_permission_confirm">Grant Access</string>
     <string name="frame_management_title">Frame Management</string>
     <string name="category_all">All</string>
     <string name="category_custom">Custom</string>

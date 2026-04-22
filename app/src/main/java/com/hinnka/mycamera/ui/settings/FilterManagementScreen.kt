@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.lut.LutInfo
+import com.hinnka.mycamera.lut.orderedLutCategoryTitles
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
@@ -167,27 +168,12 @@ fun FilterManagementScreen(
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val categories = remember(localLutList, categoryOrder, builtInText, uncategorizedText, reservedCategoryNames) {
-        val dynamicCategories = localLutList.map { it.category }
-            .distinct()
-            .filter { it.isNotEmpty() && it !in reservedCategoryNames }
-        val hasUncategorizedLuts = localLutList.any { !it.isBuiltIn && it.category.isEmpty() }
-        val orderedKnownCategories = categoryOrder.filter { it == builtInText || dynamicCategories.contains(it) }
-        val remainingDynamic = dynamicCategories.filterNot { it in orderedKnownCategories }.sorted()
-
-        buildList {
-            if (orderedKnownCategories.isEmpty()) {
-                add(builtInText)
-                addAll(remainingDynamic)
-            } else {
-                addAll(orderedKnownCategories)
-                if (builtInText !in orderedKnownCategories) add(builtInText)
-                addAll(remainingDynamic)
-            }
-
-            if (hasUncategorizedLuts) {
-                add(uncategorizedText)
-            }
-        }
+        orderedLutCategoryTitles(
+            luts = localLutList,
+            categoryOrder = categoryOrder,
+            builtInText = builtInText,
+            uncategorizedText = uncategorizedText
+        )
     }
     val filteredLutList = remember(selectedTabIndex, localLutList, categories) {
         if (selectedTabIndex >= categories.size) return@remember localLutList

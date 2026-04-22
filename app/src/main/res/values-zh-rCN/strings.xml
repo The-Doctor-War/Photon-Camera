@@ -405,6 +405,17 @@
     <string name="restore_success">恢复成功，请重新启动应用。</string>
     <string name="restore_failed">恢复失败</string>
     <string name="filter_management_title">滤镜管理</string>
+    <string name="apply_lut_title">应用 LUT</string>
+    <string name="apply_lut_processing">正在应用 LUT...</string>
+    <string name="apply_lut_processing_progress">正在应用 LUT...（%1$d/%2$d）</string>
+    <string name="apply_lut_processing_progress_detail">正在处理第 %1$d / %2$d 张照片</string>
+    <string name="apply_lut_success">已应用 %1$s</string>
+    <string name="apply_lut_success_multiple">已将 %2$s 应用到 %1$d 张照片</string>
+    <string name="apply_lut_failed">应用 LUT 失败</string>
+    <string name="apply_lut_multi_summary">%1$d 张照片</string>
+    <string name="apply_lut_permission_title">需要文件访问权限</string>
+    <string name="apply_lut_permission_message">通过分享图片应用 LUT 依赖文件管理权限，请先为应用授予访问权限。</string>
+    <string name="apply_lut_permission_confirm">去授权</string>
     <string name="frame_management_title">边框管理</string>
     <string name="category_all">所有</string>
     <string name="category_custom">自定义</string>

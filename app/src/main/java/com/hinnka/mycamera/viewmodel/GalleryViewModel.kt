@@ -521,8 +521,28 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val newList = repository.getPhotosPage(offset = loadOffset, limit = loadCount)
             val currentMap = _photos.value.associateBy { it.id }
 
-            // 保留现有元数据和运行时状态，避免分页追加时丢失信息
-            val mergedList = newList.map { currentMap[it.id] ?: it }
+            // 保留运行时状态，但使用最新加载到的 metadata/sourceUri 等持久化信息
+            val mergedList = newList.map { fresh ->
+                currentMap[fresh.id]?.let { existing ->
+                    existing.copy(
+                        uri = fresh.uri,
+                        thumbnailUri = fresh.thumbnailUri,
+                        displayName = fresh.displayName,
+                        dateAdded = fresh.dateAdded,
+                        size = fresh.size,
+                        width = fresh.width,
+                        height = fresh.height,
+                        mediaType = fresh.mediaType,
+                        mimeType = fresh.mimeType,
+                        durationMs = fresh.durationMs,
+                        sourceUri = fresh.sourceUri,
+                        isMotionPhoto = fresh.isMotionPhoto,
+                        isBurstPhoto = fresh.isBurstPhoto,
+                        metadata = fresh.metadata,
+                        relatedPhoto = fresh.relatedPhoto
+                    )
+                } ?: fresh
+            }
             if (reset) {
                 _photos.value = mergedList
                 photonOffset = mergedList.size
