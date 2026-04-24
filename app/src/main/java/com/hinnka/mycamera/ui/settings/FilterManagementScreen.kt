@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.color.TransferCurve
+import com.hinnka.mycamera.data.ZipCubeImportManager
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.orderedLutCategoryTitles
 import com.hinnka.mycamera.raw.ColorSpace
@@ -65,6 +66,10 @@ private fun sanitizeCustomLutCategoryInput(
     }
 }
 
+private fun isZipImportUri(uri: Uri): Boolean {
+    return uri.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true
+}
+
 /**
  * 滤镜管理页面
  * 
@@ -77,6 +82,8 @@ fun FilterManagementScreen(
     viewModel: CameraViewModel,
     onBack: () -> Unit,
     onLutCreatorClick: () -> Unit = {},
+    pendingZipImportUris: List<Uri> = emptyList(),
+    onZipImportHandled: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val currentLutId by viewModel.currentLutId.collectAsState()
@@ -151,6 +158,17 @@ fun FilterManagementScreen(
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var showImportCategoryDialog by remember { mutableStateOf(false) }
     var pendingImportUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var pendingZipUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
+
+    LaunchedEffect(pendingZipImportUris) {
+        if (pendingZipImportUris.isNotEmpty()) {
+            pendingImportUris = pendingZipImportUris
+            pendingZipUris = pendingZipImportUris.toSet()
+            categoryText = ""
+            showImportCategoryDialog = true
+            onZipImportHandled()
+        }
+    }
 
     // 多选状态
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
@@ -191,6 +209,7 @@ fun FilterManagementScreen(
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
             pendingImportUris = uris
+            pendingZipUris = uris.filter(::isZipImportUri).toSet()
             categoryText = ""
             showImportCategoryDialog = true
         }
@@ -1073,31 +1092,47 @@ fun FilterManagementScreen(
                             val urisToImport = pendingImportUris
                             val curveToUse = selectedCurve
                             val colorSpace = selectedColorSpace
+                            val zipUrisToImport = pendingZipUris
                             showImportCategoryDialog = false
                             pendingImportUris = emptyList()
+                            pendingZipUris = emptySet()
 
                             isImporting = true
                             importProgress = Pair(0, urisToImport.size)
                             scope.launch {
                                 var successCount = 0
                                 var failCount = 0
+                                val zipCubeImportManager = ZipCubeImportManager(context.applicationContext)
 
                                 urisToImport.forEachIndexed { index, uri ->
                                     importProgress = Pair(index + 1, urisToImport.size)
-                                    val lutId = withContext(Dispatchers.IO) {
-                                        customImportManager.importLut(
-                                            uri,
-                                            category = targetCategory,
-                                            colorSpace = colorSpace,
-                                            curve = curveToUse
-                                        )
-                                    }
-                                    if (lutId != null) {
-                                        successCount++
-                                        // 若为 .plut v4 文件，提取嵌入的色彩配方并保存
-                                        viewModel.extractAndSaveColorRecipeFromPlut(lutId, uri)
+                                    if (uri in zipUrisToImport || isZipImportUri(uri)) {
+                                        val result = withContext(Dispatchers.IO) {
+                                            zipCubeImportManager.importCubeFilesFromZip(
+                                                uri = uri,
+                                                category = targetCategory,
+                                                colorSpace = colorSpace,
+                                                curve = curveToUse
+                                            )
+                                        }
+                                        successCount += result.successCount
+                                        failCount += result.failCount
                                     } else {
-                                        failCount++
+                                        val lutId = withContext(Dispatchers.IO) {
+                                            customImportManager.importLut(
+                                                uri,
+                                                category = targetCategory,
+                                                colorSpace = colorSpace,
+                                                curve = curveToUse
+                                            )
+                                        }
+                                        if (lutId != null) {
+                                            successCount++
+                                            // 若为 .plut v4 文件，提取嵌入的色彩配方并保存
+                                            viewModel.extractAndSaveColorRecipeFromPlut(lutId, uri)
+                                        } else {
+                                            failCount++
+                                        }
                                     }
                                 }
 
@@ -1124,6 +1159,7 @@ fun FilterManagementScreen(
                     TextButton(onClick = {
                         showImportCategoryDialog = false
                         pendingImportUris = emptyList()
+                        pendingZipUris = emptySet()
                     }) {
                         Text(stringResource(R.string.cancel))
                     }

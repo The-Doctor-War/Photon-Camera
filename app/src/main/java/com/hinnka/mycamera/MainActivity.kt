@@ -119,6 +119,7 @@ class MainActivity : ComponentActivity() {
 
     private var hasPermissions by mutableStateOf(false)
     private var pendingRoute by mutableStateOf<String?>(null)
+    private var pendingZipImportUris by mutableStateOf<List<Uri>>(emptyList())
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -195,7 +196,9 @@ class MainActivity : ComponentActivity() {
                                 cameraViewModel = cameraViewModel,
                                 galleryViewModel = galleryViewModel,
                                 pendingRoute = pendingRoute,
-                                onRouteHandled = { pendingRoute = null }
+                                onRouteHandled = { pendingRoute = null },
+                                pendingZipImportUris = pendingZipImportUris,
+                                onZipImportHandled = { pendingZipImportUris = emptyList() }
                             )
                         } else {
                             PermissionScreen(
@@ -238,7 +241,11 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        if (intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
+        val zipUris = getZipImportUris(intent)
+        if (zipUris.isNotEmpty()) {
+            pendingZipImportUris = zipUris
+            pendingRoute = Routes.FILTER_MANAGEMENT
+        } else if (intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
             val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
@@ -270,6 +277,44 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun getZipImportUris(intent: Intent): List<Uri> {
+        val isZipMimeType = intent.type?.let { type ->
+            type == "application/zip" ||
+                    type == "application/x-zip-compressed" ||
+                    type == "application/octet-stream"
+        } ?: false
+
+        val dataUri = intent.data
+        val dataLooksLikeZip = dataUri?.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true
+
+        return when (intent.action) {
+            Intent.ACTION_VIEW -> {
+                if (dataUri != null && (isZipMimeType || dataLooksLikeZip)) listOf(dataUri) else emptyList()
+            }
+            Intent.ACTION_SEND -> {
+                if (!isZipMimeType) return emptyList()
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                listOfNotNull(uri)
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                if (!isZipMimeType) return emptyList()
+                val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                uris.orEmpty()
+            }
+            else -> emptyList()
+        }
+    }
+
     private fun hideSystemUI() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).let { controller ->
@@ -292,7 +337,9 @@ fun NavigationHost(
     cameraViewModel: CameraViewModel,
     galleryViewModel: GalleryViewModel,
     pendingRoute: String? = null,
-    onRouteHandled: () -> Unit = {}
+    onRouteHandled: () -> Unit = {},
+    pendingZipImportUris: List<Uri> = emptyList(),
+    onZipImportHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val navController = rememberNavController()
@@ -501,7 +548,9 @@ fun NavigationHost(
                     },
                     onLutCreatorClick = {
                         navController.navigate(Routes.LUT_CREATOR)
-                    }
+                    },
+                    pendingZipImportUris = pendingZipImportUris,
+                    onZipImportHandled = onZipImportHandled
                 )
             }
 
