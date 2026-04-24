@@ -2800,7 +2800,7 @@ object GalleryManager {
     internal fun rotateImage(img: Bitmap, degree: Float): Bitmap {
         val matrix = Matrix()
         matrix.postRotate(degree)
-        return Bitmap.createBitmap(img, 0, 0, img.width, img.height, matrix, true)
+        return Bitmap.createBitmap(img, 0, 0, img.width, img.height, matrix, false)
     }
 
     /**
@@ -2812,6 +2812,6 @@ object GalleryManager {
             if (horizontal) -1f else 1f,
             if (vertical) -1f else 1f
         )
-        return Bitmap.createBitmap(img, 0, 0, img.width, img.height, matrix, true)
+        return Bitmap.createBitmap(img, 0, 0, img.width, img.height, matrix, false)
     }
 }

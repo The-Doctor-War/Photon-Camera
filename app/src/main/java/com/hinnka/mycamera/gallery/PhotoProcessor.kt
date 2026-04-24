@@ -325,7 +325,7 @@ class PhotoProcessor(
                 chromaNoiseReduction
             )
         } else if (photoFile.exists()) {
-            val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath) ?: return null
+            val bitmap = GalleryManager.loadOriginalBitmap(context, photoId) ?: return null
             return processBitmap(
                 context,
                 photoId,
