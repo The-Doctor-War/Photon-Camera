@@ -363,7 +363,7 @@ fun LutCreatorScreen(
                         state.generatedSourceBitmap?.let { bitmap ->
                             Spacer(modifier = Modifier.height(24.dp))
                             Text(
-                                text = "AI 还原的原图预览",
+                                text = stringResource(R.string.lut_creator_ai_restored_preview),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

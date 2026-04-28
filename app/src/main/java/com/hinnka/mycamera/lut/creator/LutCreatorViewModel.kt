@@ -38,6 +38,65 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
                 }
 
                 val userPrefs = userPrefsRepo.userPreferences.firstOrNull()
+                val isBuiltIn = userPrefs?.openAIApiKey.isNullOrBlank()
+                val apiKey = if (isBuiltIn) {
+                    OpenAIApiClient.BUILT_IN_API_KEY
+                } else {
+                    userPrefs.openAIApiKey.orEmpty()
+                }
+                val baseUrl = if (isBuiltIn) {
+                    OpenAIApiClient.BUILT_IN_API_URL
+                } else {
+                    userPrefs.openAIBaseUrl.orEmpty()
+                }
+                val model = if (isBuiltIn) {
+                    OpenAIApiClient.BUILT_IN_MODEL
+                } else {
+                    userPrefs.openAIModel?.ifBlank { OpenAIApiClient.BUILT_IN_MODEL }
+                        ?: OpenAIApiClient.BUILT_IN_MODEL
+                }
+
+                if (apiKey.isBlank()) {
+                    _uiState.value = LutCreatorUiState.Error("OpenAI API Key is not set in settings")
+                    return@launch
+                }
+
+                val client = createOpenAiClient(apiKey, baseUrl)
+                val preparedBitmap = AiImagePreprocessor.prepareForImageToImage(bitmap)
+
+                PLog.d(
+                    "LutCreatorViewModel",
+                    "Calling AI text recipe generation for single-image LUT creation..."
+                )
+
+                val recipe = client.generateLutRecipeFromImage(
+                    bitmap = preparedBitmap,
+                    isBuiltIn = isBuiltIn,
+                    model = model,
+                    customPrompt = customPrompt
+                ).getOrThrow()
+
+                PLog.d("LutCreatorViewModel", "AI text recipe: $recipe")
+
+                _uiState.value = LutCreatorUiState.AnalysisComplete(recipe)
+            } catch (e: Exception) {
+                _uiState.value = LutCreatorUiState.Error("Analysis failed: ${e.message}")
+            }
+        }
+    }
+
+    fun analyzeAiImageWithImageEdit(uri: Uri, customPrompt: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value = LutCreatorUiState.Analyzing
+
+            try {
+                val bitmap = loadBitmapFromUri(uri)
+                if (bitmap == null) {
+                    _uiState.value = LutCreatorUiState.Error("Failed to decode image(s)")
+                    return@launch
+                }
+
+                val userPrefs = userPrefsRepo.userPreferences.firstOrNull()
                 val isBuiltIn = false
                 val apiKey = if (isBuiltIn) OpenAIApiClient.BUILT_IN_API_KEY else userPrefs?.openAIApiKey ?: ""
                 val baseUrl = if (isBuiltIn) OpenAIApiClient.BUILT_IN_API_URL else userPrefs?.openAIBaseUrl ?: ""
@@ -47,7 +106,7 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
                     return@launch
                 }
 
-                val client = OpenAIApiClient(apiKey)
+                val client = createOpenAiClient(apiKey, baseUrl)
 
                 PLog.d(
                     "LutCreatorViewModel",
@@ -71,6 +130,14 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
             } catch (e: Exception) {
                 _uiState.value = LutCreatorUiState.Error("Analysis failed: ${e.message}")
             }
+        }
+    }
+
+    private fun createOpenAiClient(apiKey: String, baseUrl: String): OpenAIApiClient {
+        return if (baseUrl.isBlank()) {
+            OpenAIApiClient(apiKey)
+        } else {
+            OpenAIApiClient(apiKey, baseUrl)
         }
     }
 

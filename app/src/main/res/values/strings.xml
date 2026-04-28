@@ -695,11 +695,11 @@
     <string name="lut_creator_desc">Select images to analyze style and generate a custom LUT.</string>
     <string name="lut_creator_tab_ai">AI Analysis</string>
     <string name="lut_creator_tab_local">Local Analysis</string>
-    <string name="lut_creator_use_ai">Use AI Analysis (Requires Key in Settings)</string>
+    <string name="lut_creator_use_ai">AI will generate a text LUT recipe from the selected styled image.</string>
     <string name="lut_creator_custom_ai_instructions">Custom AI Instructions (Optional)</string>
     <string name="lut_creator_custom_ai_hint">e.g., make it moodier, enhance reds</string>
     <string name="lut_creator_select_images">Select Images</string>
-    <string name="lut_creator_ai_mode_desc">Upload one styled image. AI will reconstruct the original image first, then keep the existing analysis flow.</string>
+    <string name="lut_creator_ai_mode_desc">Upload one styled image. AI will infer a text LUT recipe directly, without using image editing.</string>
     <string name="lut_creator_local_mode_desc">Upload multiple image pairs. Each pair should include an original image and a styled image of the same scene.</string>
     <string name="lut_creator_local_pairs_hint">For local analysis, add multiple original/styled pairs. The closer the framing and exposure match, the better the merged control points will be.</string>
     <string name="lut_creator_add_local_pair">Add Image Pair</string>
@@ -719,6 +719,7 @@
     <string name="lut_creator_target_image">Styled Image</string>
     <string name="lut_creator_analyzing">Analyzing image style...</string>
     <string name="lut_creator_analysis_complete">Analysis Complete!</string>
+    <string name="lut_creator_ai_restored_preview">AI restored original preview</string>
     <string name="lut_creator_lut_name_hint">LUT Name</string>
     <string name="lut_creator_generate_save">Generate &amp; Save</string>
     <string name="lut_creator_generating">Generating 3D Interpolated LUT...</string>

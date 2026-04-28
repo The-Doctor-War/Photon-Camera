@@ -690,11 +690,11 @@
     <string name="lut_creator_desc">选择图片分析色彩风格，并生成专属 LUT。</string>
     <string name="lut_creator_tab_ai">AI 分析</string>
     <string name="lut_creator_tab_local">本地分析</string>
-    <string name="lut_creator_use_ai">使用 AI 提取风格（需要在设置中配置 Key）</string>
+    <string name="lut_creator_use_ai">AI 会根据所选效果图生成文字版 LUT 配方。</string>
     <string name="lut_creator_custom_ai_instructions">自定义 AI 提示词（选填）</string>
     <string name="lut_creator_custom_ai_hint">例如：让画面更有氛围感，加深对比度</string>
     <string name="lut_creator_select_images">选择图片</string>
-    <string name="lut_creator_ai_mode_desc">上传一张效果图，AI 会先还原原图，再沿用现有分析流程。</string>
+    <string name="lut_creator_ai_mode_desc">上传一张效果图，AI 会直接推断文字版 LUT 配方，不再调用图片编辑能力。</string>
     <string name="lut_creator_local_mode_desc">上传多组图片，每组包含一张原图和一张效果图，且应尽量是完全相同的场景。</string>
     <string name="lut_creator_local_pairs_hint">本地分析支持多组原图/效果图配对。构图、曝光和场景越一致，合并后的控制点越稳定。</string>
     <string name="lut_creator_add_local_pair">添加图片组</string>
@@ -714,6 +714,7 @@
     <string name="lut_creator_target_image">效果图</string>
     <string name="lut_creator_analyzing">正在分析图片风格…</string>
     <string name="lut_creator_analysis_complete">分析完成！</string>
+    <string name="lut_creator_ai_restored_preview">AI 还原的原图预览</string>
     <string name="lut_creator_lut_name_hint">LUT 预设名称</string>
     <string name="lut_creator_generate_save">生成并保存</string>
     <string name="lut_creator_generating">正在生成 3D LUT 数据…</string>

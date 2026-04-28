@@ -123,6 +123,96 @@ class OpenAIApiClient(
             }
         }
 
+    suspend fun generateLutRecipeFromImage(
+        bitmap: Bitmap,
+        isBuiltIn: Boolean,
+        model: String,
+        customPrompt: String = ""
+    ): Result<LutRecipe> =
+        withContext(Dispatchers.IO) {
+            try {
+                val base64Image = bitmapToBase64(bitmap)
+                val prompt = """
+You are a professional color scientist for camera LUT creation.
+The user uploads one already-styled target image. The current API cannot edit images, so do not generate or request a restored image.
+Instead, infer a practical color grading recipe as text only.
+
+Task:
+- Inspect the uploaded styled image.
+- Infer plausible unstyled source colors that would map into this styled look.
+- Return control points for a 3D LUT. Each point maps source RGB to target RGB.
+- Use normalized sRGB float values in [0.0, 1.0].
+- Keep the mapping photographic, monotonic, and usable. Avoid inversions, posterization, clipping, and extreme hue rotations.
+- Include neutrals, shadows, midtones, highlights, skin/foliage/sky-like anchors when relevant.
+- Return 12 to 18 high-confidence control points.
+
+User custom instructions:
+${customPrompt.ifBlank { "None" }}
+
+Return JSON only, without markdown, using this exact schema:
+{
+  "controlPoints": [
+    {
+      "sourceR": 0.0,
+      "sourceG": 0.0,
+      "sourceB": 0.0,
+      "targetR": 0.0,
+      "targetG": 0.0,
+      "targetB": 0.0,
+      "matchConfidence": 0.0
+    }
+  ]
+}
+                """.trimIndent()
+
+                val jsonObject = JSONObject().apply {
+                    put("model", model)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("type", "text")
+                                    put("text", prompt)
+                                })
+                                put(JSONObject().apply {
+                                    put("type", "image_url")
+                                    put("image_url", JSONObject().apply {
+                                        put("url", "data:image/jpeg;base64,$base64Image")
+                                    })
+                                })
+                            })
+                        })
+                    })
+                    put("response_format", JSONObject().apply {
+                        put("type", "json_object")
+                    })
+                }
+
+                val requestBody =
+                    jsonObject.toString().toRequestBody("application/json".toMediaType())
+
+                val request = Request.Builder()
+                    .url("$apiBaseUrl/chat/completions")
+                    .addOpenAIHeaders()
+                    .post(requestBody)
+                    .build()
+
+                val response = client.newCall(request).execute()
+                PLog.d("OpenAIApiClient", "LUT recipe response: ${response.code}")
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string() ?: "Unknown error"
+                    return@withContext Result.failure(Exception("API failed: ${response.code}\n${request.url}\n$errorBody"))
+                }
+
+                val responseBodyString = response.body?.string() ?: ""
+                val text = extractTextFromResponse(responseBodyString)
+                Result.success(parseLutRecipe(text))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     suspend fun evaluateImageQuality(
         bitmap: Bitmap,
         isBuiltIn: Boolean,
@@ -249,6 +339,52 @@ Return JSON only, without markdown, using this exact schema:
             themeExpressionScore = json.optInt("themeExpressionScore").coerceIn(0, 100),
             summary = json.optString("summary").trim()
         )
+    }
+
+    private fun parseLutRecipe(text: String): LutRecipe {
+        val json = JSONObject(extractJsonObjectText(text))
+        val controlPointsJson = json.optJSONArray("controlPoints")
+            ?: throw IllegalArgumentException("AI response did not include controlPoints")
+
+        val controlPoints = buildList {
+            for (i in 0 until controlPointsJson.length()) {
+                val item = controlPointsJson.optJSONObject(i) ?: continue
+                add(
+                    ControlPoint(
+                        sourceR = item.optDouble("sourceR").toFloat().coerceIn(0f, 1f),
+                        sourceG = item.optDouble("sourceG").toFloat().coerceIn(0f, 1f),
+                        sourceB = item.optDouble("sourceB").toFloat().coerceIn(0f, 1f),
+                        targetR = item.optDouble("targetR").toFloat().coerceIn(0f, 1f),
+                        targetG = item.optDouble("targetG").toFloat().coerceIn(0f, 1f),
+                        targetB = item.optDouble("targetB").toFloat().coerceIn(0f, 1f),
+                        matchConfidence = item.optDouble("matchConfidence", 0.8).toFloat()
+                            .coerceIn(0f, 1f)
+                    )
+                )
+            }
+        }
+
+        if (controlPoints.size < 6) {
+            throw IllegalArgumentException("AI returned too few LUT control points: ${controlPoints.size}")
+        }
+
+        return LutRecipe(controlPoints)
+    }
+
+    private fun extractJsonObjectText(text: String): String {
+        val cleaned = text
+            .trim()
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+        val jsonStart = cleaned.indexOf('{')
+        val jsonEnd = cleaned.lastIndexOf('}')
+        return if (jsonStart >= 0 && jsonEnd >= jsonStart) {
+            cleaned.substring(jsonStart, jsonEnd + 1)
+        } else {
+            cleaned
+        }
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
