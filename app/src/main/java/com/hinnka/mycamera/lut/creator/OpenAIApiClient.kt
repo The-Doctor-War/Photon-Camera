@@ -6,8 +6,10 @@ import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,16 +18,18 @@ import java.util.concurrent.TimeUnit
 import androidx.core.graphics.scale
 
 class OpenAIApiClient(
-    private val apiKey: String
+    private val apiKey: String,
+    baseUrl: String = BUILT_IN_API_URL
 ) {
 
     companion object {
-        const val BUILT_IN_API_URL = "https://camera-api.hinnka.com/v1"
-        const val BUILT_IN_API_KEY = "ix8wzecbrapNdJqSlumyhY31JuFiuh/fzHFsEJThYtg="
-        const val BUILT_IN_IMAGE_MODEL = "models/gemini-3.1-flash-image-preview"
-        const val BUILT_IN_MODEL = "models/gemini-3-flash-preview"
-        const val GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
+        const val BUILT_IN_API_URL = "https://token-plan-cn.xiaomimimo.com/v1"
+        const val BUILT_IN_API_KEY = "tp-clodqe7tne37catuogvqv83fpfr3clbkun21meavj59ffwpl"
+        const val BUILT_IN_IMAGE_MODEL = "mimo-v2.5"
+        const val BUILT_IN_MODEL = "mimo-v2.5"
     }
+
+    private val apiBaseUrl = baseUrl.trimEnd('/')
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -35,11 +39,9 @@ class OpenAIApiClient(
 
     suspend fun getAvailableModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
-            val requestUrl = "$GEMINI_API_URL/models?pageSize=1000"
-
             val request = Request.Builder()
-                .url(requestUrl)
-                .addHeader("x-goog-api-key", apiKey)
+                .url("$apiBaseUrl/models")
+                .addOpenAIHeaders()
                 .get()
                 .build()
 
@@ -51,12 +53,12 @@ class OpenAIApiClient(
 
             val bodyString = response.body?.string() ?: ""
             val jsonObject = JSONObject(bodyString)
-            val dataArray = jsonObject.getJSONArray("models")
+            val dataArray = jsonObject.getJSONArray("data")
 
             val models = mutableListOf<String>()
             for (i in 0 until dataArray.length()) {
                 val modelObj = dataArray.getJSONObject(i)
-                val id = modelObj.optString("name")
+                val id = modelObj.optString("id")
                 if (id.isNotEmpty()) {
                     models.add(id)
                 }
@@ -77,51 +79,24 @@ class OpenAIApiClient(
     ): Result<Bitmap> =
         withContext(Dispatchers.IO) {
             try {
-                val base64Image = bitmapToBase64(bitmap)
+                val prompt =
+                    "Restore this image to its original natural version. Remove all cinematic filters, LUTs, and color grading. Return a high-quality, realistic photo with natural colors and neutral white balance. $customPrompt"
+                val requestBody = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("model", model)
+                    .addFormDataPart("prompt", prompt)
+                    .addFormDataPart(
+                        "image",
+                        "input.jpg",
+                        bitmapToJpegRequestBody(bitmap)
+                    )
+                    .build()
 
-                val jsonObject = JSONObject().apply {
-                    val contents = JSONArray().apply {
-                        val content = JSONObject().apply {
-                            val parts = JSONArray().apply {
-                                val textPart = JSONObject().apply {
-                                    put(
-                                        "text",
-                                        "Restore this image to its original natural version. Remove all cinematic filters, LUTs, and color grading. Return a high-quality, realistic photo with natural colors and neutral white balance. $customPrompt"
-                                    )
-                                }
-                                val imagePart = JSONObject().apply {
-                                    put("inline_data", JSONObject().apply {
-                                        put("mime_type", "image/jpeg")
-                                        put("data", base64Image)
-                                    })
-                                }
-                                put(textPart)
-                                put(imagePart)
-                            }
-                            put("parts", parts)
-                        }
-                        put(content)
-                    }
-                    put("contents", contents)
-                }
-
-                val requestBody =
-                    jsonObject.toString().toRequestBody("application/json".toMediaType())
-
-
-                val request = if (isBuiltIn) {
-                    Request.Builder()
-                        .url("$BUILT_IN_API_URL/images/generations")
-                        .addHeader("Authorization", "Bearer $apiKey")
-                        .post(requestBody)
-                        .build()
-                } else {
-                    Request.Builder()
-                        .url("$GEMINI_API_URL/$model:generateContent")
-                        .addHeader("x-goog-api-key", apiKey)
-                        .post(requestBody)
-                        .build()
-                }
+                val request = Request.Builder()
+                    .url("$apiBaseUrl/images/edits")
+                    .addOpenAIHeaders()
+                    .post(requestBody)
+                    .build()
 
                 val response = client.newCall(request).execute()
                 PLog.d("OpenAIApiClient", "Response: ${response.code}")
@@ -131,27 +106,8 @@ class OpenAIApiClient(
                 }
 
                 val responseBodyString = response.body?.string() ?: ""
-                // PLog.d("OpenAIApiClient", "Response: ${responseBodyString.take(500)}...") // Only log first 500 chars to avoid memory issues
                 val jsonResponse = JSONObject(responseBodyString)
-
-                // Handle native Gemini image response format
-                // The API actually uses "inlineData" with camelCase in response, while request uses snake_case "inline_data"
-                val candidates = jsonResponse.optJSONArray("candidates")
-                if (candidates == null || candidates.length() == 0) {
-                    return@withContext Result.failure(Exception("No candidates in response"))
-                }
-
-                val parts =
-                    candidates.getJSONObject(0).getJSONObject("content").getJSONArray("parts")
-                var b64Data: String? = null
-
-                for (i in 0 until parts.length()) {
-                    val part = parts.getJSONObject(i)
-                    if (part.has("inlineData")) {
-                        b64Data = part.getJSONObject("inlineData").getString("data")
-                        break
-                    }
-                }
+                val b64Data = extractImageBase64FromResponse(jsonResponse)
 
                 if (b64Data == null) {
                     return@withContext Result.failure(Exception("No image data found in AI response. Response: $responseBodyString"))
@@ -177,70 +133,66 @@ class OpenAIApiClient(
             try {
                 val base64Image = bitmapToBase64(bitmap)
                 val prompt = """
-You are an expert photography critic, curator, and competition judge. Provide a rigorous, discerning, and deeply observant critique. 
+你是专为摄影作品打分和点评的专业评论家。请只从构图、色彩、光影、主题表达四个维度评价这张照片，给出严格但有建设性的分数和点评，不虚伪不奉承，不泛泛而谈。
 
-Use this rigorous grading scale:
-- 90-100 (Masterpiece): Exceptional imagery with profound emotional impact, masterful visual hierarchy, and unforgettable narrative depth.
-- 80-89 (Excellent): Compelling work with a strong authorial voice, deliberate use of light/geometry, and highly engaging subject matter.
-- 70-79 (Competent): Good photography with clear intent and solid aesthetics, but lacks the distinctive 'punctum' or unique perspective to be truly memorable.
-- 60-69 (Functional): Ordinary but acceptable. Serves as a clear record of a moment or subject, yet lacks significant atmospheric or aesthetic draw.
-- 40-59 (Flawed): Weak execution or concept. Plagued by poor visual flow, distracting elements, missed timing, or lack of a clear focal point.
-- 0-39 (Unsuccessful): Fundamental failures in both intent and execution, resulting in a visually confusing or entirely unengaging image.
+四个维度定义:
+- 构图: 画面结构、主体位置、边缘处理、空间关系、视觉引导和平衡感。
+- 色彩: 色彩搭配、白平衡、饱和度控制、色彩层次和整体色调是否服务主题。
+- 光影: 曝光、明暗关系、光线方向、层次、质感塑造和高光阴影控制。
+- 主题表达: 主体是否明确，画面情绪、叙事、意图和观看记忆点是否成立。
+
+评分指南:
+- 90-100: 达到专业摄影作品水准.
+- 80-89: 接近专业摄影作品水准.
+- 70-79: 不错的艺术创作.
+- 60-69: 日常可接受的随拍.
+- 40-59: 在某方面有一些欠缺.
+- 0-39: 失败作品.
 
 The user's current system language is "$localeTag". The "summary" value MUST be written in that language.
 Return JSON only, without markdown, using this exact schema:
 {
   "overallScore": 0-100 integer,
-  "imageQualityScore": 0-100 integer,
   "compositionScore": 0-100 integer,
-  "subjectScore": 0-100 integer,
-  "emotionScore": 0-100 integer,
-  "summary": "one highly insightful, professional sentence summarizing the critique in the user's system language"
+  "colorScore": 0-100 integer,
+  "lightingScore": 0-100 integer,
+  "themeExpressionScore": 0-100 integer,
+  "summary": "对照片做一句话总结性评论，有内容有具体指导意见，使用用户系统语言"
 }
-
-Scoring Guidelines:
-- imageQualityScore: Evaluate tonal range, exposure choices, focus intent, and artifacting. Does the technical execution (whether pristine or intentionally degraded for mood) elevate the artistic vision?
-- compositionScore: Assess visual hierarchy, framing, weight distribution, juxtaposition, and figure-to-ground relationship. Does the underlying geometry guide the eye powerfully?
-- subjectScore: Judge the intrinsic intrigue of the subject, the timing of the capture, and how effectively the image isolates its core message without distraction.
-- emotionScore: Measure the atmospheric depth, narrative power, mood, and the image's ability to evoke a visceral, lasting psychological response.
-- overallScore: A holistic synthesis reflecting the image's total artistic, documentary, and viewing value.
                 """.trimIndent()
 
                 val jsonObject = JSONObject().apply {
-                    val contents = JSONArray().apply {
-                        val content = JSONObject().apply {
-                            val parts = JSONArray().apply {
-                                put(JSONObject().apply { put("text", prompt) })
+                    put("model", model)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", JSONArray().apply {
                                 put(JSONObject().apply {
-                                    put("inline_data", JSONObject().apply {
-                                        put("mime_type", "image/jpeg")
-                                        put("data", base64Image)
+                                    put("type", "text")
+                                    put("text", prompt)
+                                })
+                                put(JSONObject().apply {
+                                    put("type", "image_url")
+                                    put("image_url", JSONObject().apply {
+                                        put("url", "data:image/jpeg;base64,$base64Image")
                                     })
                                 })
-                            }
-                            put("parts", parts)
-                        }
-                        put(content)
-                    }
-                    put("contents", contents)
+                            })
+                        })
+                    })
+                    put("response_format", JSONObject().apply {
+                        put("type", "json_object")
+                    })
                 }
 
                 val requestBody =
                     jsonObject.toString().toRequestBody("application/json".toMediaType())
 
-                val request = if (isBuiltIn) {
-                    Request.Builder()
-                        .url("$BUILT_IN_API_URL/chat/completions")
-                        .addHeader("Authorization", "Bearer $apiKey")
-                        .post(requestBody)
-                        .build()
-                } else {
-                    Request.Builder()
-                        .url("$GEMINI_API_URL/$model:generateContent")
-                        .addHeader("x-goog-api-key", apiKey)
-                        .post(requestBody)
-                        .build()
-                }
+                val request = Request.Builder()
+                    .url("$apiBaseUrl/chat/completions")
+                    .addOpenAIHeaders()
+                    .post(requestBody)
+                    .build()
 
                 val response = client.newCall(request).execute()
                 PLog.d("OpenAIApiClient", "Evaluate response: ${response.code}")
@@ -260,29 +212,12 @@ Scoring Guidelines:
     private fun extractTextFromResponse(responseBodyString: String): String {
         val jsonResponse = JSONObject(responseBodyString)
 
-        jsonResponse.optJSONArray("candidates")?.let { candidates ->
-            if (candidates.length() > 0) {
-                val parts = candidates
-                    .getJSONObject(0)
-                    .getJSONObject("content")
-                    .getJSONArray("parts")
-                val textBuilder = StringBuilder()
-                for (i in 0 until parts.length()) {
-                    val part = parts.getJSONObject(i)
-                    if (part.has("text")) {
-                        textBuilder.append(part.getString("text"))
-                    }
-                }
-                if (textBuilder.isNotBlank()) return textBuilder.toString()
-            }
-        }
-
         jsonResponse.optJSONArray("choices")?.let { choices ->
             if (choices.length() > 0) {
                 val firstChoice = choices.getJSONObject(0)
                 val message = firstChoice.optJSONObject("message")
-                val content = message?.optString("content").orEmpty()
-                if (content.isNotBlank()) return content
+                val contentText = message?.extractOpenAIContentText().orEmpty()
+                if (contentText.isNotBlank()) return contentText
                 val text = firstChoice.optString("text")
                 if (text.isNotBlank()) return text
             }
@@ -308,10 +243,10 @@ Scoring Guidelines:
         val json = JSONObject(jsonText)
         return AiPhotoEvaluation(
             overallScore = json.optInt("overallScore").coerceIn(0, 100),
-            imageQualityScore = json.optInt("imageQualityScore").coerceIn(0, 100),
             compositionScore = json.optInt("compositionScore").coerceIn(0, 100),
-            subjectScore = json.optInt("subjectScore").coerceIn(0, 100),
-            emotionScore = json.optInt("emotionScore").coerceIn(0, 100),
+            colorScore = json.optInt("colorScore").coerceIn(0, 100),
+            lightingScore = json.optInt("lightingScore").coerceIn(0, 100),
+            themeExpressionScore = json.optInt("themeExpressionScore").coerceIn(0, 100),
             summary = json.optString("summary").trim()
         )
     }
@@ -338,13 +273,55 @@ Scoring Guidelines:
         val byteArray = outputStream.toByteArray()
         return Base64.encodeToString(byteArray, Base64.NO_WRAP)
     }
+
+    private fun bitmapToJpegRequestBody(bitmap: Bitmap): RequestBody {
+        val outputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)
+        return outputStream.toByteArray().toRequestBody("image/jpeg".toMediaType())
+    }
+
+    private fun extractImageBase64FromResponse(jsonResponse: JSONObject): String? {
+        val data = jsonResponse.optJSONArray("data") ?: return null
+        if (data.length() == 0) return null
+
+        val image = data.getJSONObject(0)
+        image.optString("b64_json").takeIf { it.isNotBlank() }?.let { return it }
+
+        val url = image.optString("url")
+        if (url.startsWith("data:image/")) {
+            return url.substringAfter("base64,", missingDelimiterValue = "")
+                .takeIf { it.isNotBlank() }
+        }
+
+        return null
+    }
+
+    private fun Request.Builder.addOpenAIHeaders(): Request.Builder =
+        addHeader("Authorization", "Bearer $apiKey")
+
+    private fun JSONObject.extractOpenAIContentText(): String {
+        val content = opt("content")
+        if (content is String) return content
+        if (content is JSONArray) {
+            val textBuilder = StringBuilder()
+            for (i in 0 until content.length()) {
+                val part = content.optJSONObject(i) ?: continue
+                val text = part.optString("text")
+                if (text.isNotBlank()) {
+                    textBuilder.append(text)
+                }
+            }
+            return textBuilder.toString()
+        }
+        return ""
+    }
 }
 
 data class AiPhotoEvaluation(
     val overallScore: Int,
-    val imageQualityScore: Int,
     val compositionScore: Int,
-    val subjectScore: Int,
-    val emotionScore: Int,
+    val colorScore: Int,
+    val lightingScore: Int,
+    val themeExpressionScore: Int,
     val summary: String
 )

@@ -512,7 +512,7 @@
     <string name="lut_creator_error">錯誤：%s</string>
     <string name="lut_creator_try_again">再試一次</string>
     <string name="gallery_ai_analysis">AI 分析</string>
-    <string name="gallery_ai_quality_title">AI 質量分析</string>
+    <string name="gallery_ai_quality_title">AI 攝影分析</string>
     <string name="gallery_ai_premium_required">AI 相片分析是 Pro 功能，升級後可解鎖 AI 評分與點評。</string>
     <string name="gallery_ai_analyzing">正在分析相片…</string>
     <string name="gallery_ai_analysis_failed">分析失敗，請檢查 AI 設定後重試。</string>
@@ -521,10 +521,10 @@
     <string name="gallery_ai_rank_good">良好</string>
     <string name="gallery_ai_rank_pass">及格</string>
     <string name="gallery_ai_rank_needs_work">待改進</string>
-    <string name="gallery_ai_dimension_image_quality">畫質表現</string>
-    <string name="gallery_ai_dimension_composition">構圖美學</string>
-    <string name="gallery_ai_dimension_subject">主題內容</string>
-    <string name="gallery_ai_dimension_emotion">情感故事</string>
+    <string name="gallery_ai_dimension_composition">構圖</string>
+    <string name="gallery_ai_dimension_color">色彩</string>
+    <string name="gallery_ai_dimension_lighting">光影</string>
+    <string name="gallery_ai_dimension_theme_expression">主題表達</string>
 
     <string name="settings_ai_model">AI 提取模型</string>
     <string name="settings_ai_model_desc">選擇 AI 模型</string>

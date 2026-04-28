@@ -936,10 +936,10 @@ private fun AiScoreBottomSheet(
                     }
 
                     val dimensions = listOf(
-                        stringResource(R.string.gallery_ai_dimension_image_quality) to state.evaluation.imageQualityScore,
                         stringResource(R.string.gallery_ai_dimension_composition) to state.evaluation.compositionScore,
-                        stringResource(R.string.gallery_ai_dimension_subject) to state.evaluation.subjectScore,
-                        stringResource(R.string.gallery_ai_dimension_emotion) to state.evaluation.emotionScore
+                        stringResource(R.string.gallery_ai_dimension_color) to state.evaluation.colorScore,
+                        stringResource(R.string.gallery_ai_dimension_lighting) to state.evaluation.lightingScore,
+                        stringResource(R.string.gallery_ai_dimension_theme_expression) to state.evaluation.themeExpressionScore
                     )
                     dimensions.forEach { (label, value) ->
                         AiScoreDimensionRow(

@@ -1793,7 +1793,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 prefs.openAIBaseUrl.orEmpty()
             }
-            val model = prefs?.openAIModel?.ifEmpty { OpenAIApiClient.BUILT_IN_MODEL } ?: OpenAIApiClient.BUILT_IN_MODEL
+            val model = if (isBuiltIn) {
+                OpenAIApiClient.BUILT_IN_MODEL
+            } else {
+                prefs.openAIModel?.ifEmpty { OpenAIApiClient.BUILT_IN_MODEL } ?: OpenAIApiClient.BUILT_IN_MODEL
+            }
 
             if (apiKey.isBlank()) {
                 return@withContext Result.failure(IllegalStateException("AI API key is not configured"))

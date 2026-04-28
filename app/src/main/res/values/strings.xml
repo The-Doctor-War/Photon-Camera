@@ -727,7 +727,7 @@
     <string name="lut_creator_error">Error: %s</string>
     <string name="lut_creator_try_again">Try Again</string>
     <string name="gallery_ai_analysis">AI Analysis</string>
-    <string name="gallery_ai_quality_title">AI Quality Analysis</string>
+    <string name="gallery_ai_quality_title">AI Photo Analysis</string>
     <string name="gallery_ai_premium_required">AI photo analysis is a Pro feature. Upgrade to unlock AI scoring and comments.</string>
     <string name="gallery_ai_analyzing">Analyzing photo...</string>
     <string name="gallery_ai_analysis_failed">Analysis failed. Check AI settings and try again.</string>
@@ -736,10 +736,10 @@
     <string name="gallery_ai_rank_good">Good</string>
     <string name="gallery_ai_rank_pass">Pass</string>
     <string name="gallery_ai_rank_needs_work">Needs Work</string>
-    <string name="gallery_ai_dimension_image_quality">Quality</string>
     <string name="gallery_ai_dimension_composition">Composition</string>
-    <string name="gallery_ai_dimension_subject">Subject</string>
-    <string name="gallery_ai_dimension_emotion">Emotion</string>
+    <string name="gallery_ai_dimension_color">Color</string>
+    <string name="gallery_ai_dimension_lighting">Light</string>
+    <string name="gallery_ai_dimension_theme_expression">Theme</string>
 
     <string name="settings_ai_model">AI Model</string>
     <string name="settings_ai_model_desc">Select the model for AI.</string>
