@@ -492,6 +492,8 @@
     <!-- LUT Creator & UI -->
     <string name="lut_creator_title">AI 仿色</string>
     <string name="lut_creator_desc">選擇圖片分析色彩風格，並生成專屬 LUT。</string>
+    <string name="lut_creator_premium_required_title">需要會員</string>
+    <string name="lut_creator_premium_required_desc">未在設定中配置自己的 OpenAI API Key 時，LUT 建立功能需要購買會員後才能使用。</string>
     <string name="lut_creator_tab_ai">AI 分析</string>
     <string name="lut_creator_tab_local">本地分析</string>
     <string name="lut_creator_use_ai">使用 AI 提取風格（需要在設定中配置 Key）</string>

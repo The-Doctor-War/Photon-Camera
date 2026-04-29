@@ -711,6 +711,8 @@
     <!-- LUT Creator & UI -->
     <string name="lut_creator_title">LUT Creator</string>
     <string name="lut_creator_desc">Select images to analyze style and generate a custom LUT.</string>
+    <string name="lut_creator_premium_required_title">Premium required</string>
+    <string name="lut_creator_premium_required_desc">LUT Creator requires Premium unless you have configured your own OpenAI API key in Settings.</string>
     <string name="lut_creator_tab_ai">AI Analysis</string>
     <string name="lut_creator_tab_local">Local Analysis</string>
     <string name="lut_creator_use_ai">AI will generate a text LUT recipe from the selected styled image.</string>

@@ -774,7 +774,7 @@ fun SettingsScreen(
                         TextInputSettingItem(
                             title = stringResource(R.string.settings_openai_base_url),
                             description = stringResource(R.string.settings_openai_base_url_desc),
-                            value = openAIUrl ?: OpenAIApiClient.BUILT_IN_API_URL,
+                            value = openAIUrl ?: OpenAIApiClient.DEFAULT_API_URL,
                             onValueChange = { viewModel.setOpenAIUrl(it) }
                         )
 
@@ -786,7 +786,7 @@ fun SettingsScreen(
                         DropdownSettingItem(
                             title = stringResource(R.string.settings_ai_model),
                             description = stringResource(R.string.settings_ai_model_desc),
-                            value = openAIModel ?: OpenAIApiClient.BUILT_IN_MODEL,
+                            value = openAIModel ?: OpenAIApiClient.DEFAULT_MODEL,
                             options = availableOpenAIModels,
                             isLoading = isFetchingAIModels,
                             enabled = !openAIApiKey.isNullOrBlank(),

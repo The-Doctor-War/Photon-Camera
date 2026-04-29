@@ -99,6 +99,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         .map { it.droMode }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "OFF")
 
+    val openAIApiKey = userPreferencesRepository.userPreferences.map { it.openAIApiKey }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
     // 计费管理器
     private val billingManager = com.hinnka.mycamera.billing.BillingManagerImpl(application)
     val isPurchased = billingManager.isPurchased

@@ -29,11 +29,6 @@ android {
         versionName = "1.16.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField(
-            "String",
-            "BUILT_IN_API_KEY",
-            localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
-        )
         
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -80,17 +75,43 @@ android {
     productFlavors {
         create("google") {
             dimension = "channel"
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_URL",
+                "https://camera-api.hinnka.com/v1".toBuildConfigString()
+            )
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_KEY",
+                localProperties.getProperty("BUILT_IN_API_KEY_GOOGLE", "").toBuildConfigString()
+            )
         }
         create("default") {
             dimension = "channel"
-        }
-        create("meitu") {
-            dimension = "channel"
-            applicationId = "com.meitu.meiyancamera"
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_URL",
+                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
+            )
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_KEY",
+                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
+            )
         }
         create("samsung") {
             dimension = "channel"
             applicationId = "com.samsung.android.scan3d"
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_URL",
+                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
+            )
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_KEY",
+                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
+            )
         }
     }
 
@@ -109,12 +130,6 @@ android {
     }
 
     sourceSets {
-        getByName("meitu") {
-            java {
-                srcDir("src/default/java")
-            }
-            manifest.srcFile("src/default/AndroidManifest.xml")
-        }
         getByName("samsung") {
             java {
                 srcDir("src/default/java")
@@ -171,7 +186,6 @@ dependencies {
 
     // Bugly for default flavor
     "defaultImplementation"("com.tencent.bugly:crashreport:latest.release")
-    "meituImplementation"("com.tencent.bugly:crashreport:latest.release")
     "samsungImplementation"("com.tencent.bugly:crashreport:latest.release")
 
     // Billing for google flavor

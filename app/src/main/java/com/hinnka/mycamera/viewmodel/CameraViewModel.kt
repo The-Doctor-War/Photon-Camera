@@ -1689,13 +1689,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             _isFetchingAIModels.value = true
-            val isBuiltIn = openAIApiKey.value.isNullOrBlank()
-            val apiKey = if (isBuiltIn) OpenAIApiClient.BUILT_IN_API_KEY else openAIApiKey.value
-
-            if (apiKey.isNullOrBlank()) {
-                _isFetchingAIModels.value = false
-                return@launch
-            }
 
             try {
                 val context = getApplication<Application>()

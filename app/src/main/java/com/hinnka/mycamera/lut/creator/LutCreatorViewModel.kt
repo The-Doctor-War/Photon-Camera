@@ -2,19 +2,29 @@ package com.hinnka.mycamera.lut.creator
 
 import android.app.Application
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hinnka.mycamera.data.CustomImportManager
+import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.lut.LutManager
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
 class LutCreatorViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val contentRepository = ContentRepository.getInstance(application)
+    private val userPreferencesRepository = contentRepository.userPreferencesRepository
+    private val billingManager = com.hinnka.mycamera.billing.BillingManagerImpl(application)
     private val importManager = CustomImportManager(application)
     private val lutManager = LutManager(application)
 
@@ -22,6 +32,14 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
     val uiState: StateFlow<LutCreatorUiState> = _uiState
 
     val aiAnalysisEnabled: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    val isPurchased = billingManager.isPurchased
+    val openAIApiKey = userPreferencesRepository.userPreferences.map { it.openAIApiKey }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    var showPaymentDialog by mutableStateOf(false)
+
+    fun purchase(activity: android.app.Activity) {
+        billingManager.purchase(activity)
+    }
 
     fun analyzeAiImage(uri: Uri, customPrompt: String = "") {
         viewModelScope.launch(Dispatchers.IO) {

@@ -830,6 +830,8 @@ private fun AiScoreBottomSheet(
     var requestToken by remember(photo.id) { mutableIntStateOf(0) }
     var uiState by remember(photo.id) { mutableStateOf<AiEvaluationUiState>(AiEvaluationUiState.Loading) }
 
+    val openAIKey by viewModel.openAIApiKey.collectAsState()
+
     LaunchedEffect(photo.id, requestToken, isPurchased) {
         if (!isPurchased) return@LaunchedEffect
         uiState = AiEvaluationUiState.Loading
@@ -870,7 +872,7 @@ private fun AiScoreBottomSheet(
                 modifier = Modifier.padding(bottom = 24.dp)
             )
 
-            if (!isPurchased) {
+            if (!isPurchased && openAIKey.isNullOrBlank()) {
                 Text(
                     text = stringResource(R.string.gallery_ai_premium_required),
                     color = Color.White.copy(alpha = 0.72f),

@@ -706,6 +706,8 @@
     <!-- LUT Creator & UI -->
     <string name="lut_creator_title">AI 仿色</string>
     <string name="lut_creator_desc">选择图片分析色彩风格，并生成专属 LUT。</string>
+    <string name="lut_creator_premium_required_title">需要会员</string>
+    <string name="lut_creator_premium_required_desc">未在设置中配置自己的 OpenAI API Key 时，LUT 创建功能需要购买会员后才能使用。</string>
     <string name="lut_creator_tab_ai">AI 分析</string>
     <string name="lut_creator_tab_local">本地分析</string>
     <string name="lut_creator_use_ai">AI 会根据所选效果图生成文字版 LUT 配方。</string>

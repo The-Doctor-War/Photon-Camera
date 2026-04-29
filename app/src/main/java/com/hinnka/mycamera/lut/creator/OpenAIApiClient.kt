@@ -31,26 +31,28 @@ class OpenAIApiClient() {
 
     suspend fun initialize(context: Context) {
         val userPrefs = ContentRepository.getInstance(context).userPreferencesRepository.userPreferences.firstOrNull()
-        val isBuiltIn = userPrefs?.openAIApiKey.isNullOrBlank() && DeviceUtil.canShowPhantom
+        val isBuiltIn = userPrefs?.openAIApiKey.isNullOrBlank()
         apiKey = if (isBuiltIn) {
             BUILT_IN_API_KEY
         } else {
-            userPrefs?.openAIApiKey ?: ""
+            userPrefs.openAIApiKey
         }
         apiBaseUrl = if (isBuiltIn) {
             BUILT_IN_API_URL
         } else {
-            userPrefs?.openAIBaseUrl?.ifBlank { BUILT_IN_API_URL } ?: BUILT_IN_API_URL
+            userPrefs.openAIBaseUrl?.ifBlank { DEFAULT_API_URL } ?: DEFAULT_API_URL
         }.trimEnd('/')
         model = if (isBuiltIn) {
             BUILT_IN_MODEL
         } else {
-            userPrefs?.openAIModel?.ifBlank { BUILT_IN_MODEL } ?: BUILT_IN_MODEL
+            userPrefs.openAIModel?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
         }
     }
 
     companion object {
-        const val BUILT_IN_API_URL = "https://token-plan-cn.xiaomimimo.com/v1"
+        val DEFAULT_API_URL = "https://api.openai.com/v1"
+        val DEFAULT_MODEL = "gpt-5.5"
+        val BUILT_IN_API_URL = BuildConfig.BUILT_IN_API_URL
 //        const val OPENAI_API_URL = "https://api.openai.com/v1"
         val BUILT_IN_API_KEY = BuildConfig.BUILT_IN_API_KEY
         const val BUILT_IN_IMAGE_MODEL = "mimo-v2.5"
