@@ -1084,7 +1084,7 @@ object Shaders {
 
         const float PI = 3.14159265359;
         const float GOLDEN_ANGLE = 2.39996323;
-        const int SAMPLES = 160;
+        const int SAMPLES = 400;
         const float LENS_GAMMA = 2.2;
 
         float backgroundGap(float depth) {
@@ -1101,20 +1101,12 @@ object Shaders {
         float apertureWeight(vec2 offsetPixels, float coc) {
             vec2 p = offsetPixels / max(coc, 0.001);
             float lenP = length(p);
-            if (lenP > 1.12) {
-                return 0.0;
-            }
-
-            // Six-blade aperture approximation. It keeps the bokeh from looking
-            // like a generic Gaussian/circular blur while retaining soft edges.
-            float blades = 6.0;
-            float sector = 2.0 * PI / blades;
-            float angle = atan(p.y, p.x) + PI / 6.0;
-            float polygonRadius = cos(sector * 0.5) / cos(mod(angle, sector) - sector * 0.5);
-            float inside = smoothstep(polygonRadius + 0.055, polygonRadius - 0.035, lenP);
-
-            float rim = smoothstep(0.58, 1.0, lenP);
-            return inside * (1.0 + rim * 0.22);
+            
+            // Perfect circular "creamy" bokeh with a soap bubble rim.
+            // Circular is universally considered more aesthetic than hexagonal.
+            float inside = smoothstep(1.0, 0.85, lenP);
+            float rim = smoothstep(0.6, 0.95, lenP);
+            return inside * (1.0 + rim * 0.4); // 40% brighter edge ring, softer than 80%
         }
 
         vec3 toLinear(vec3 color) {
@@ -1158,7 +1150,8 @@ object Shaders {
                 vec2 sampleUV = clamp(vTexCoord + offset, 0.0, 1.0);
                 vec2 offsetPixels = offset / uTexelSize;
 
-                float lod = log2(r * 0.3 + 1.5);
+                // Adjust LOD to be slightly blurrier to guarantee points merge smoothly
+                float lod = log2(r * 0.4 + 2.0);
                 vec3 sColor = textureLod(uInputTexture, sampleUV, lod).rgb;
                 vec2 sDepthUV = clamp((uDepthMatrix * vec4(sampleUV, 0.0, 1.0)).xy, 0.0, 1.0);
                 float sDepth = texture(uDepthTexture, sDepthUV).r;
@@ -1199,7 +1192,10 @@ object Shaders {
                 if (weight > 0.0001) {
                     vec3 sLinear = toLinear(sColor);
                     float luma = dot(sLinear, vec3(0.2126, 0.7152, 0.0722));
-                    float hdrBoost = 1.0 + pow(max(0.0, luma - 0.52), 2.0) * 3.2 * smoothstep(1.0, 5.0, sCoc);
+                    
+                    // Reduced highlight boost to prevent Vogel spiral points from isolating and tearing
+                    float highlight = max(0.0, luma - 0.60);
+                    float hdrBoost = 1.0 + pow(highlight, 2.0) * 15.0 * smoothstep(1.5, 5.0, sCoc);
 
                     float edge = smoothstep(0.7, 1.05, r / max(sCoc, 0.1));
                     float ring = 1.0 + edge * 0.28 * smoothstep(1.5, 5.0, sCoc);
