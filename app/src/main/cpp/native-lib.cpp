@@ -433,9 +433,9 @@ static float sampleDngGainMapBilinear(const DngGainMap &gainMap, float x, float 
 
 struct AutoBlackLevelChoice {
   bool valid = false;
-  bool usesMetadata = true;
-  float estimated = 0.0f;
-  float selected = 0.0f;
+  bool usesMetadata[4] = {true, true, true, true};
+  float estimated[4] = {};
+  float selected[4] = {};
 };
 
 static int percentileFromHistogram(const std::vector<int> &histogram, int count,
@@ -498,13 +498,13 @@ static AutoBlackLevelChoice chooseAutoBlackLevelPreset(
     }
   }
 
-  float p01Sum = 0.0f;
   int validChannels = 0;
+  float estimated[4] = {};
   for (int channel = 0; channel < 4; ++channel) {
     if (counts[channel] <= 0) {
       continue;
     }
-    p01Sum += static_cast<float>(
+    estimated[channel] = static_cast<float>(
         percentileFromHistogram(histograms[channel], counts[channel], 0.001f));
     ++validChannels;
   }
@@ -512,30 +512,48 @@ static AutoBlackLevelChoice chooseAutoBlackLevelPreset(
     return choice;
   }
 
-  const float metadataAverage =
-      (metadataBlackLevels[0] + metadataBlackLevels[1] +
-       metadataBlackLevels[2] + metadataBlackLevels[3]) *
-      0.25f;
-  const float estimated = p01Sum / static_cast<float>(validChannels);
-  const float presets[] = {0.0f, 16.0f, 64.0f, 100.0f, metadataAverage};
-  int bestIndex = 0;
-  float bestDistance = std::abs(estimated - presets[0]);
-  for (int i = 1; i < 5; ++i) {
-    const float distance = std::abs(estimated - presets[i]);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = i;
+  const float fixedPresets[] = {0.0f, 16.0f, 64.0f, 100.0f};
+  for (int channel = 0; channel < 4; ++channel) {
+    choice.estimated[channel] = estimated[channel];
+    choice.selected[channel] = metadataBlackLevels[channel];
+    choice.usesMetadata[channel] = true;
+
+    if (counts[channel] <= 0) {
+      continue;
+    }
+
+    float bestValue = fixedPresets[0];
+    float bestDistance = std::abs(estimated[channel] - fixedPresets[0]);
+    for (int i = 1; i < 4; ++i) {
+      const float distance = std::abs(estimated[channel] - fixedPresets[i]);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestValue = fixedPresets[i];
+      }
+    }
+
+    const float metadataDistance =
+        std::abs(estimated[channel] - metadataBlackLevels[channel]);
+    if (metadataDistance <= bestDistance) {
+      choice.selected[channel] = metadataBlackLevels[channel];
+      choice.usesMetadata[channel] = true;
+    } else {
+      choice.selected[channel] = bestValue;
+      choice.usesMetadata[channel] = false;
     }
   }
 
   choice.valid = true;
-  choice.usesMetadata = bestIndex == 4;
-  choice.estimated = estimated;
-  choice.selected = presets[bestIndex];
-  LOGI("dng auto black level: estimated=%0.2f selected=%s%0.2f "
-       "metadata=%0.2f",
-       estimated, choice.usesMetadata ? "metadata:" : "", choice.selected,
-       metadataAverage);
+  LOGI("dng auto black level: estimated=%0.2f/%0.2f/%0.2f/%0.2f "
+       "selected=%s%0.2f/%s%0.2f/%s%0.2f/%s%0.2f metadata=%0.2f/%0.2f/%0.2f/%0.2f",
+       choice.estimated[0], choice.estimated[1], choice.estimated[2],
+       choice.estimated[3],
+       choice.usesMetadata[0] ? "metadata:" : "", choice.selected[0],
+       choice.usesMetadata[1] ? "metadata:" : "", choice.selected[1],
+       choice.usesMetadata[2] ? "metadata:" : "", choice.selected[2],
+       choice.usesMetadata[3] ? "metadata:" : "", choice.selected[3],
+       metadataBlackLevels[0], metadataBlackLevels[1], metadataBlackLevels[2],
+       metadataBlackLevels[3]);
   return choice;
 }
 
@@ -2052,9 +2070,18 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   if (useRawAutoBlackLevelCorrection == JNI_TRUE) {
     const AutoBlackLevelChoice choice =
         chooseAutoBlackLevelPreset(RawProcessor, metadataBlackLevels);
-    if (choice.valid && !choice.usesMetadata) {
-      for (float &level : dngBlackLevels) {
-        level = choice.selected;
+    bool shouldOverrideBlackLevels = false;
+    if (choice.valid) {
+      for (int i = 0; i < 4; ++i) {
+        if (!choice.usesMetadata[i]) {
+          shouldOverrideBlackLevels = true;
+          break;
+        }
+      }
+    }
+    if (choice.valid && shouldOverrideBlackLevels) {
+      for (int i = 0; i < 4; ++i) {
+        dngBlackLevels[i] = choice.selected[i];
       }
       overrideLibRawBlackLevels(RawProcessor, dngBlackLevels);
       LOGI("dng black levels auto override: %f %f %f %f", dngBlackLevels[0],
