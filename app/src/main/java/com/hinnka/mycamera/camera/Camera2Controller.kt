@@ -179,6 +179,7 @@ class Camera2Controller(private val context: Context) {
     // 缓存 CaptureResult 和 Image 用于配对 (timestamp -> Data)
     private val pendingResults = ConcurrentHashMap<Long, TotalCaptureResult>()
     private val pendingImages = ConcurrentHashMap<Long, SafeImage>()
+    private val pendingCaptureStartedTimestamps = ConcurrentHashMap<Long, Long>()
     private val pendingCloseReaders = mutableListOf<ImageReader>()
     private val openImagesCount = AtomicInteger(0)
 
@@ -196,6 +197,12 @@ class Camera2Controller(private val context: Context) {
             openImagesCount.getAndIncrement()
         }
         return image?.let { SafeImage(it, this) }
+    }
+
+    private fun getCaptureTimestamp(result: TotalCaptureResult): Long? {
+        val frameNumber = result.frameNumber
+        val startedTimestamp = pendingCaptureStartedTimestamps.remove(frameNumber)
+        return result.get(CaptureResult.SENSOR_TIMESTAMP) ?: startedTimestamp
     }
 
     // 快门音效播放回调
@@ -2669,6 +2676,9 @@ class Camera2Controller(private val context: Context) {
                         timestamp: Long,
                         frameNumber: Long
                     ) {
+                        if (state.value.useRaw && isRawSupported) {
+                            pendingCaptureStartedTimestamps[frameNumber] = timestamp
+                        }
                         PLog.d(TAG, "Burst capture started at frame $frameNumber")
                     }
 
@@ -2677,7 +2687,7 @@ class Camera2Controller(private val context: Context) {
                         request: CaptureRequest,
                         result: TotalCaptureResult
                     ) {
-                        val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+                        val timestamp = getCaptureTimestamp(result)
                         if (timestamp != null && state.value.useRaw && isRawSupported) {
                             val pendingImage = pendingImages.remove(timestamp)
                             if (pendingImage != null) {
@@ -2723,6 +2733,9 @@ class Camera2Controller(private val context: Context) {
                         timestamp: Long,
                         frameNumber: Long
                     ) {
+                        if (state.value.useRaw && isRawSupported) {
+                            pendingCaptureStartedTimestamps[frameNumber] = timestamp
+                        }
                         PLog.d(TAG, "Capture started at frame $frameNumber")
                     }
 
@@ -2731,7 +2744,7 @@ class Camera2Controller(private val context: Context) {
                         request: CaptureRequest,
                         result: TotalCaptureResult
                     ) {
-                        val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+                        val timestamp = getCaptureTimestamp(result)
                         if (timestamp != null && state.value.useRaw && isRawSupported) {
                             val pendingImage = pendingImages.remove(timestamp)
                             if (pendingImage != null) {

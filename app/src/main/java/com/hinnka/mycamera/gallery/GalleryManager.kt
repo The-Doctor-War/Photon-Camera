@@ -1126,9 +1126,19 @@ object GalleryManager {
             val tempDngFile = File(photoDir, "temp.dng")
             val tempFile = File(photoDir, "temp.jpg")
 
-            val metadata = loadMetadata(context, photoId) ?: return@withContext
+            val metadata = loadMetadata(context, photoId)
+            if (metadata == null) {
+                PLog.e(TAG, "saveRawPhoto aborted: metadata unavailable for $photoId")
+                image.close()
+                return@withContext
+            }
 
-            captureResult ?: return@withContext
+            val resolvedCaptureResult = captureResult
+            if (resolvedCaptureResult == null) {
+                PLog.e(TAG, "saveRawPhoto aborted: captureResult unavailable for $photoId")
+                image.close()
+                return@withContext
+            }
 
             var dngSaveAttempted = false
             FileOutputStream(tempDngFile).use { outputStream ->
@@ -1137,7 +1147,7 @@ object GalleryManager {
                         RawProcessor.saveToDng(
                             image,
                             characteristics,
-                            captureResult,
+                            resolvedCaptureResult,
                             outputStream,
                             rotation,
                             thumbnail

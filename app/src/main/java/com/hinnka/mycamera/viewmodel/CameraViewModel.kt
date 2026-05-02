@@ -2473,6 +2473,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         characteristics: CameraCharacteristics?,
         captureResult: CaptureResult?
     ) {
+        var ownsImage = true
         try {
             PLog.d(TAG, "saveImage started - dimensions: ${image.width}x${image.height}, format: ${image.format}")
             val context = getApplication<Application>()
@@ -2582,7 +2583,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 deferred
             } else null
 
-            characteristics ?: return
+            val resolvedCharacteristics = characteristics ?: run {
+                PLog.e(TAG, "Failed to save image: camera characteristics unavailable")
+                return
+            }
             val photoId =
                 GalleryManager.preparePhoto(
                     context,
@@ -2597,6 +2601,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 PLog.e(TAG, "Failed to save image")
                 return
             }
+            ownsImage = false
             viewModelScope.launch(Dispatchers.IO) {
                 GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred)
 
@@ -2607,7 +2612,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     previewThumbnail,
                     rotation,
                     aspectRatio,
-                    characteristics,
+                    resolvedCharacteristics,
                     captureResult,
                     shouldAutoSave,
                     contentRepository.photoProcessor,
@@ -2624,6 +2629,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             _imageSavedEvent.emit(Unit)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to save image", e)
+        } finally {
+            if (ownsImage) {
+                image.close()
+            }
         }
     }
 
