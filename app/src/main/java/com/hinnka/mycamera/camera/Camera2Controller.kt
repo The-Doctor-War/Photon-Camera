@@ -74,7 +74,8 @@ class Camera2Controller(private val context: Context) {
         // 自定义错误代码
         const val ERROR_CAMERA_DISCONNECTED = 1000
 
-        const val MAX_IMAGES = 20
+        private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
+        private const val BURST_CAPTURE_BATCH_SIZE = 8
 
         // 拍照状态机常量
         private const val STATE_PREVIEW = 0 // Showing camera preview.
@@ -183,6 +184,7 @@ class Camera2Controller(private val context: Context) {
     private val pendingCaptureStartedTimestamps = ConcurrentHashMap<Long, Long>()
     private val pendingCloseReaders = mutableListOf<ImageReader>()
     private val openImagesCount = AtomicInteger(0)
+    private var imageReaderMaxImages = SINGLE_CAPTURE_READER_MAX_IMAGES
 
     private var burstCapturing = false
 
@@ -219,13 +221,48 @@ class Camera2Controller(private val context: Context) {
 
     fun onImageRelease() {
         val count = openImagesCount.decrementAndGet()
-        if (MAX_IMAGES - count >= state.value.multiFrameCount) {
+        if (imageReaderMaxImages - count >= activeCaptureImageRequestCount()) {
             _state.value = _state.value.copy(isCapturing = false)
         }
         if (count == 0) {
             _state.value = _state.value.copy(isCapturing = false)
             checkAndClosePendingReaders()
         }
+    }
+
+    private fun resolveImageReaderMaxImages(): Int {
+        val currentState = _state.value
+        val requestedImages = when {
+            currentState.useMFNR || currentState.useMFSR -> currentState.multiFrameCount.coerceIn(
+                MultiFrameConfig.MIN_FRAME_COUNT,
+                MultiFrameConfig.MAX_FRAME_COUNT
+            )
+
+            else -> BURST_CAPTURE_BATCH_SIZE
+        }
+        return maxOf(SINGLE_CAPTURE_READER_MAX_IMAGES, requestedImages)
+    }
+
+    private fun activeCaptureImageRequestCount(): Int {
+        val currentState = _state.value
+        return when {
+            currentState.burstCapturing -> BURST_CAPTURE_BATCH_SIZE
+            currentState.useMFNR || currentState.useMFSR -> currentState.multiFrameCount.coerceIn(
+                MultiFrameConfig.MIN_FRAME_COUNT,
+                MultiFrameConfig.MAX_FRAME_COUNT
+            )
+
+            else -> 1
+        }
+    }
+
+    private fun canAcquireImage(logPrefix: String): Boolean {
+        val openImages = openImagesCount.get()
+        if (openImages >= imageReaderMaxImages) {
+            PLog.w(TAG, "$logPrefix ($openImages/$imageReaderMaxImages), skipping acquire")
+            return false
+        }
+        return true
     }
 
     private val previewCallback = object : CameraCaptureSession.CaptureCallback() {
@@ -721,6 +758,9 @@ class Camera2Controller(private val context: Context) {
 
                 _state.value = _state.value.copy(isP3Supported = isP3Supported)
 
+                val readerMaxImages = resolveImageReaderMaxImages()
+                imageReaderMaxImages = readerMaxImages
+
                 PLog.d(
                     TAG,
                     "拍照尺寸: ${captureSize.width}x${captureSize.height}, 预览尺寸: ${previewSize.width}x${previewSize.height}, 格式: ${
@@ -729,18 +769,17 @@ class Camera2Controller(private val context: Context) {
                             ImageFormat.YCBCR_P010 -> "P010"
                             else -> "YUV"
                         }
-                    }, isP3Supported: $isP3Supported"
+                    }, isP3Supported: $isP3Supported, imageReaderMaxImages: $readerMaxImages"
                 )
                 imageReader = ImageReader.newInstance(
                     captureSize.width,
                     captureSize.height,
                     captureFormat,
-                    MAX_IMAGES
+                    readerMaxImages
                 ).apply {
                     setOnImageAvailableListener({ reader ->
                         try {
-                            if (openImagesCount.get() >= MAX_IMAGES) {
-                                PLog.w(TAG, "Too many open images ($openImagesCount), skipping acquire")
+                            if (!canAcquireImage("Too many open images")) {
                                 return@setOnImageAvailableListener
                             }
                             val rawImage = when {
@@ -1096,12 +1135,7 @@ class Camera2Controller(private val context: Context) {
                                     "readerFormat=${imageFormatToString(readerFormat)}, " +
                                     "sessionColorSpace=${if (shouldUseP3ColorSpace()) "DISPLAY_P3" else "DEFAULT"}"
                         )
-                        if (readerFormat == ImageFormat.RAW_SENSOR) {
-                            PLog.w(TAG, "Retrying photo preview session without RAW output for camera ${_state.value.currentCameraId}")
-                            session.close()
-                            rebuildPhotoReaderWithoutRaw()
-                            createPreviewSession(forceStandardSession = true)
-                        } else if (useHlgCapture) {
+                       if (useHlgCapture) {
                             PLog.w(TAG, "Retrying preview session with STANDARD dynamic range fallback")
                             _state.value = _state.value.copy(currentDynamicRangeProfile = "STANDARD")
                             createPreviewSession(forceStandardSession = true)
@@ -1117,67 +1151,7 @@ class Camera2Controller(private val context: Context) {
             device.createCaptureSession(sessionConfig)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
-            if (reader?.imageFormat == ImageFormat.RAW_SENSOR) {
-                PLog.w(TAG, "Retrying photo preview session after RAW session exception")
-                rebuildPhotoReaderWithoutRaw()
-                createPreviewSession(forceStandardSession = true)
-            }
         }
-    }
-
-    private fun rebuildPhotoReaderWithoutRaw() {
-        val cameraId = _state.value.currentCameraId
-        if (cameraId.isEmpty()) return
-
-        safeCloseImageReader(imageReader)
-        imageReader = null
-
-        val captureSize = CameraUtils.getBestCaptureSize(context, cameraId, _state.value.aspectRatio)
-        val fallbackFormat = if (isP010Supported && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && _state.value.useP010) {
-            ImageFormat.YCBCR_P010
-        } else {
-            ImageFormat.YUV_420_888
-        }
-
-        PLog.w(
-            TAG,
-            "RAW disabled for current session fallback: camera=$cameraId, " +
-                    "size=${captureSize.width}x${captureSize.height}, format=${imageFormatToString(fallbackFormat)}"
-        )
-
-        imageReader = ImageReader.newInstance(
-            captureSize.width,
-            captureSize.height,
-            fallbackFormat,
-            MAX_IMAGES
-        ).apply {
-            setOnImageAvailableListener({ reader ->
-                try {
-                    if (openImagesCount.get() >= MAX_IMAGES) {
-                        PLog.w(TAG, "Too many open images ($openImagesCount), skipping fallback acquire")
-                        return@setOnImageAvailableListener
-                    }
-                    val image = trackImage(reader.acquireLatestImage())
-                    if (image != null) {
-                        processAndTriggerCapture(image, null)
-                    } else {
-                        PLog.w(TAG, "Fallback acquireLatestImage() returned null")
-                        _state.value = _state.value.copy(isCapturing = false)
-                        resetPreviewAfterCapture()
-                    }
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Error in fallback onImageAvailable", e)
-                    _state.value = _state.value.copy(isCapturing = false)
-                    resetPreviewAfterCapture()
-                }
-            }, cameraHandler)
-        }
-
-        _state.value = _state.value.copy(
-            isRawSupported = false,
-            isP3Supported = false,
-        )
-        isRawSupported = false
     }
 
     private fun onSessionConfigured(session: CameraCaptureSession) {
@@ -3269,7 +3243,7 @@ class Camera2Controller(private val context: Context) {
 
             val request = captureBuilder.build()
             val requests = mutableListOf<CaptureRequest>()
-            for (i in 0 until 8) {
+            for (i in 0 until BURST_CAPTURE_BATCH_SIZE) {
                 requests.add(request)
             }
             session.captureBurst(requests, object : CameraCaptureSession.CaptureCallback() {
@@ -3301,7 +3275,7 @@ class Camera2Controller(private val context: Context) {
 
     private fun checkBurstCaptureContinue() {
         if (!state.value.burstCapturing) return
-        if (MAX_IMAGES - openImagesCount.get() < 8) {
+        if (imageReaderMaxImages - openImagesCount.get() < BURST_CAPTURE_BATCH_SIZE) {
             cameraHandler?.postDelayed({
                 checkBurstCaptureContinue()
             }, 100)
