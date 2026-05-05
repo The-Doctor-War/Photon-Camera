@@ -3191,7 +3191,8 @@ class Camera2Controller(private val context: Context) {
         imageWidth: Int,
         imageHeight: Int,
         latitude: Double? = null,
-        longitude: Double? = null
+        longitude: Double? = null,
+        effectiveCharacteristics: CameraCharacteristics? = null
     ): CaptureInfo {
         val cameraId = _state.value.currentCameraId
         val zoomRatio = _state.value.zoomRatio
@@ -3202,7 +3203,7 @@ class Camera2Controller(private val context: Context) {
         var focalLength35mm: Int? = null
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
 
             // 光圈值（取第一个可用光圈）
             val apertures = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
@@ -3232,7 +3233,7 @@ class Camera2Controller(private val context: Context) {
             focalLength = it * zoomRatio
             // 重新计算35mm等效焦距
             try {
-                val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+                val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
                 focalLength35mm = calculate35mmEquivalent(characteristics)?.times(zoomRatio)?.roundToInt()
             } catch (e: Exception) {
                 // 忽略
@@ -3388,15 +3389,51 @@ class Camera2Controller(private val context: Context) {
         try {
             val width = image.width
             val height = image.height
-            // PLog.d(TAG, "Matching Image and CaptureResult found for timestamp ${image.timestamp}")
+            var effectiveCharacteristics = cachedCharacteristics
+            var effectiveResult: CaptureResult? = result
+
+            // For RAW images, ensure characteristics match image dimensions to avoid DngCreator crash.
+            // This is especially important for logical multi-camera devices where the RAW might come from a physical sub-camera.
+            if (image.format == ImageFormat.RAW_SENSOR && result != null) {
+                val checkMatch = { chars: CameraCharacteristics? ->
+                    val pixelArray = chars?.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                    val preCorrectionArray = chars?.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+                    (pixelArray?.width == width && pixelArray?.height == height) ||
+                            (preCorrectionArray?.width() == width && preCorrectionArray?.height() == height)
+                }
+
+                if (!checkMatch(effectiveCharacteristics)) {
+                    PLog.d(TAG, "RAW dimensions $width x $height mismatch logical characteristics. Searching physical cameras...")
+                    for ((physicalId, physicalResult) in result.physicalCameraResults) {
+                        try {
+                            val physicalChars = cameraManager.getCameraCharacteristics(physicalId)
+                            if (checkMatch(physicalChars)) {
+                                PLog.i(TAG, "Found matching physical camera $physicalId for RAW image")
+                                effectiveCharacteristics = physicalChars
+                                effectiveResult = physicalResult
+                                break
+                            }
+                        } catch (e: Exception) {
+                            PLog.w(TAG, "Failed to check physical camera $physicalId", e)
+                        }
+                    }
+                }
+            }
 
             // 构建 CaptureInfo
-            val captureInfo = rebuildCaptureInfo(result, width, height, _state.value.latitude, _state.value.longitude)
+            val captureInfo = rebuildCaptureInfo(
+                result = if (effectiveResult is TotalCaptureResult) effectiveResult else result,
+                imageWidth = width,
+                imageHeight = height,
+                latitude = _state.value.latitude,
+                longitude = _state.value.longitude,
+                effectiveCharacteristics = effectiveCharacteristics
+            )
 
             // 传递完整的 Image 对象、CaptureInfo、CameraCharacteristics 和 CaptureResult
             val callback = onImageCaptured
             if (callback != null) {
-                callback.invoke(image, captureInfo, cachedCharacteristics, result)
+                callback.invoke(image, captureInfo, effectiveCharacteristics, effectiveResult ?: result)
             } else {
                 image.close()
             }

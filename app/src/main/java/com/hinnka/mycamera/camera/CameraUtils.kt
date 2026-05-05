@@ -120,10 +120,21 @@ object CameraUtils {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR)
+            val sizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR) ?: return null
             
-            // RAW 通常只有一个尺寸，返回最大的
-            sizes?.maxByOrNull { it.width * it.height }
+            if (sizes.isEmpty()) return null
+
+            val pixelArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+            val preCorrectionSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+
+            // Try to find a size that matches DngCreator's requirements (PixelArray or PreCorrectionActiveArray)
+            val bestMatch = sizes.find {
+                (it.width == pixelArraySize?.width && it.height == pixelArraySize.height) ||
+                (it.width == preCorrectionSize?.width() && it.height == preCorrectionSize.height())
+            }
+
+            // Return the best match if found, otherwise fall back to the largest available size
+            bestMatch ?: sizes.maxByOrNull { it.width * it.height }
         } catch (e: Exception) {
             PLog.e("CameraUtils", "Failed to get RAW capture size: ${e.message}")
             null
