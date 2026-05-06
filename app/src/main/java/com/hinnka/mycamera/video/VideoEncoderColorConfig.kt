@@ -66,8 +66,9 @@ fun resolveVideoEncoderColorConfig(
         pipeline = VideoEncodedColorPipeline.CUSTOM_LOG,
         colorStandard = colorStandard,
         // Android/ISO container metadata没有 Apple Log / V-Log / LogC4 等传递函数枚举。
-        // 这里显式不写 transfer，避免把自定义 Log 错标成 HLG/PQ/SDR。
-        colorTransfer = null,
+        // 为了让播放器不对 Log 视频进行 HDR 色调映射而丢失灰片效果，
+        // 必须将其显式标记为 SDR 传递函数（避免 10-bit 编码时被默认当成 HLG/PQ）
+        colorTransfer = MediaFormat.COLOR_TRANSFER_SDR_VIDEO,
         colorRange = MediaFormat.COLOR_RANGE_LIMITED,
         codecProfile = codecProfile,
         prefer10BitInputSurface = codecProfile != null,
