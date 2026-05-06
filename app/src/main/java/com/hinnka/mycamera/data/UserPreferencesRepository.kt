@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.hinnka.mycamera.camera.MultiFrameConfig
+import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.color.TransferCurve
@@ -76,6 +77,7 @@ data class UserPreferences(
     val nrLevel: Int = 5,  // 降噪等级：0=Off, 1=Fast, 2=High Quality, 3=ZSL, 4=Minimal, 5=Auto
     val edgeLevel: Int = 1, // 锐化等级：0=Off, 1=Fast, 2=High Quality, 3=Real-time
     val useRaw: Boolean = false,                // 使用 RAW 格式拍摄
+    val meteringMode: MeteringMode = MeteringMode.CENTER_WEIGHTED, // 测光模式
     val sharpening: Float = 0f,              // 0.0 ~ 1.0 锐化强度
     val noiseReduction: Float = 0f,         // 0.0 ~ 1.0 降噪强度
     val chromaNoiseReduction: Float = 0f,   // 0.0 ~ 1.0 减少杂色强度
@@ -170,6 +172,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val NR_LEVEL = intPreferencesKey("nr_level")
         private val EDGE_LEVEL = intPreferencesKey("edge_level")
         private val USE_RAW = booleanPreferencesKey("use_raw")
+        private val METERING_MODE = stringPreferencesKey("metering_mode")
 
         // 软件处理参数 Keys
         private val SHARPENING = floatPreferencesKey("sharpening")
@@ -274,6 +277,9 @@ class UserPreferencesRepository(private val context: Context) {
                 nrLevel = preferences[NR_LEVEL] ?: 5,
                 edgeLevel = preferences[EDGE_LEVEL] ?: 1,
                 useRaw = preferences[USE_RAW] ?: false,
+                meteringMode = MeteringMode.valueOf(
+                    preferences[METERING_MODE] ?: MeteringMode.CENTER_WEIGHTED.name
+                ),
                 // 软件处理参数
                 sharpening = preferences[SHARPENING] ?: 0f,
                 noiseReduction = preferences[NOISE_REDUCTION] ?: 0f,
@@ -678,6 +684,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveUseRaw(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[USE_RAW] = enabled
+        }
+    }
+
+    suspend fun saveMeteringMode(mode: MeteringMode) {
+        context.dataStore.edit { preferences ->
+            preferences[METERING_MODE] = mode.name
         }
     }
 

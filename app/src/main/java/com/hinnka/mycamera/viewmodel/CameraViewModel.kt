@@ -496,6 +496,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setEdgeLevel(it.edgeLevel)
                 // 同步 RAW 设置到相机控制器
                 cameraController.setUseRaw(it.useRaw)
+                if (cameraController.state.value.meteringMode != it.meteringMode) {
+                    cameraController.setMeteringMode(it.meteringMode)
+                }
                 cameraController.setCaptureMode(it.captureMode)
                 cameraController.setVideoResolution(it.videoResolution)
                 cameraController.setVideoFps(it.videoFps)
@@ -614,6 +617,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setVideoStabilizationMode(prefs.videoStabilizationMode)
                 cameraController.setVideoTorchEnabled(prefs.videoTorchEnabled)
                 cameraController.setVideoCodec(prefs.videoCodec)
+                cameraController.setMeteringMode(prefs.meteringMode)
 
                 // 应用保存的 LUT 配置
                 if (prefs.lutId != null) {
@@ -1509,6 +1513,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setMeteringMode(mode: com.hinnka.mycamera.camera.MeteringMode) {
         cameraController.setMeteringMode(mode)
+        viewModelScope.launch {
+            userPreferencesRepository.saveMeteringMode(mode)
+        }
     }
 
     // ==================== 计费相关方法 ====================
