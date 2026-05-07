@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,6 +90,10 @@ fun GalleryScreen(
     val hasPermission = viewModel.hasGalleryPermission
     val scope = rememberCoroutineScope()
     var shouldRenderGrid by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler(enabled = isSelectionMode) {
+        viewModel.exitSelectionMode()
+    }
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()

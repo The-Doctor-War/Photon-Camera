@@ -2,6 +2,7 @@ package com.hinnka.mycamera.ui.settings
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -177,6 +178,10 @@ fun FilterManagementScreen(
     // 多选状态
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     val isSelectionMode = selectedIds.isNotEmpty()
+
+    BackHandler(enabled = isSelectionMode) {
+        selectedIds = emptySet()
+    }
 
     // 分类管理状态
     val categoryOrder by viewModel.categoryOrder.collectAsState(emptyList())
