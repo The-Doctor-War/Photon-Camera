@@ -38,6 +38,7 @@ fun CustomSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     onDoubleTap: (() -> Unit)? = null,
+    onValueChangeFinished: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
@@ -50,6 +51,7 @@ fun CustomSlider(
     var isDragging by remember { mutableStateOf(false) }
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
 
     val density = LocalDensity.current
     val thumbRadiusPx = with(density) { thumbRadius.toPx() }
@@ -73,8 +75,8 @@ fun CustomSlider(
                     if (!enabled) return@pointerInput
                     detectDragGestures(
                         onDragStart = { isDragging = true },
-                        onDragEnd = { isDragging = false },
-                        onDragCancel = { isDragging = false }
+                        onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
+                        onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
                     ) { change, _ ->
                         change.consume()
                         val trackWidth = size.width - thumbRadiusPx * 2
@@ -98,6 +100,7 @@ fun CustomSlider(
                             val fraction = (x - trackStart) / trackWidth
                             val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
                             currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
+                            currentOnValueChangeFinished?.invoke()
                         }
                     )
                 }
@@ -263,6 +266,7 @@ fun CustomSliderThinThumb(
                             val fraction = (x - trackStart) / trackWidth
                             val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
                             currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
+                            currentOnValueChangeFinished?.invoke()
                         }
                     )
                 }
