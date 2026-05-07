@@ -514,6 +514,7 @@ fun GalleryDetailScreen(
                                         colorSpace = currentColorSpace,
                                         showOrigin = showOrigin || viewModel.selectedTab == GalleryTab.SYSTEM,
                                         isActive = page == pagerState.currentPage,
+                                        isScrollInProgress = pagerState.isScrollInProgress,
                                         viewModel = viewModel,
                                         onZoomChange = { zoomed ->
                                             if (page == pagerState.currentPage) {
@@ -1337,6 +1338,7 @@ private fun ZoomableImage(
     colorSpace: MutableState<ColorSpace?>,
     showOrigin: Boolean,
     isActive: Boolean,
+    isScrollInProgress: Boolean,
     viewModel: GalleryViewModel,
     onZoomChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
@@ -1371,11 +1373,13 @@ private fun ZoomableImage(
             label = "hdrFadeIn"
         )
         val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
+        val isSettledActive = isActive && !isScrollInProgress
 
-        LaunchedEffect(photo.id, metadataHash, showOrigin, refreshKey, isActive) {
+        LaunchedEffect(photo.id, metadataHash, showOrigin, refreshKey, isSettledActive) {
             suspend fun loadBitmap() {
                 isLoading = bitmap == null
-                bitmap = viewModel.getPreviewBitmap(photo, showOrigin = showOrigin, ignoreDenoise = !isActive)
+                bitmap = viewModel.getPreviewBitmap(photo, showOrigin = showOrigin,
+                    ignoreDenoise = !isSettledActive, maxEdge = if (isSettledActive) 4096 else 1024)
                 if (bitmap == null) {
                     delay(500)
                     loadBitmap()
@@ -1383,7 +1387,7 @@ private fun ZoomableImage(
                 colorSpace.value = bitmap?.colorSpace
                 isLoading = bitmap == null
 
-                if (photo.metadata?.manualHdrEffectEnabled == true) {
+                if (photo.metadata?.manualHdrEffectEnabled == true && isSettledActive) {
                     hdrBitmap = viewModel.getDetailBitmap(photo)
                     hdrBitmap?.let {
                         colorSpace.value = it.colorSpace
@@ -1391,9 +1395,6 @@ private fun ZoomableImage(
                 } else {
                     hdrBitmap = null
                 }
-            }
-            if (isActive) {
-                delay(300L)
             }
             loadBitmap()
         }
