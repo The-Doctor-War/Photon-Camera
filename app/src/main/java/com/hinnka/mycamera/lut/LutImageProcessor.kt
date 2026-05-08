@@ -1887,51 +1887,47 @@ class LutImageProcessor {
             }
 
             vec3 applyPrimaryCalibration(vec3 color) {
-                if (abs(uPrimaryHue.x) < 0.0001 && abs(uPrimaryHue.y) < 0.0001 && abs(uPrimaryHue.z) < 0.0001 && 
+                if (abs(uPrimaryHue.x) < 0.0001 && abs(uPrimaryHue.y) < 0.0001 && abs(uPrimaryHue.z) < 0.0001 &&
                     abs(uPrimarySaturation.x) < 0.0001 && abs(uPrimarySaturation.y) < 0.0001 && abs(uPrimarySaturation.z) < 0.0001 &&
                     abs(uPrimaryLightness.x) < 0.0001 && abs(uPrimaryLightness.y) < 0.0001 && abs(uPrimaryLightness.z) < 0.0001) {
                     return color;
                 }
 
+                // 1. Separate neutral component to protect gray balance
                 float minC = min(min(color.r, color.g), color.b);
                 vec3 rgb = color - minC;
+
+                // 2. Define transformation vectors for each primary channel (Energy Conservative)
                 
-                // 1. Hue Shift (mixes primaries via channel rotation mapping)
-                float rH = uPrimaryHue.x * 0.35;
-                float gH = uPrimaryHue.y * 0.35;
-                float bH = uPrimaryHue.z * 0.35;
+                // --- Red Primary ---
+                float rH = uPrimaryHue.x * 0.45;
+                float rS = uPrimarySaturation.x * 0.8;
+                float rL = uPrimaryLightness.x * 0.35;
+                // Hue shift: blend towards neighbor primaries
+                vec3 r_vec = vec3(1.0 - abs(rH), max(0.0, rH), max(0.0, -rH));
+                // Saturation: boost primary while subtracting from others to maintain energy
+                r_vec += vec3(rS, -rS * 0.5, -rS * 0.5);
+                r_vec *= (1.0 + rL);
 
-                vec3 r_vec = vec3(1.0 - abs(rH), rH > 0.0 ? rH : 0.0, rH < 0.0 ? -rH : 0.0);
-                vec3 g_vec = vec3(gH < 0.0 ? -gH : 0.0, 1.0 - abs(gH), gH > 0.0 ? gH : 0.0);
-                vec3 b_vec = vec3(bH > 0.0 ? bH : 0.0, bH < 0.0 ? -bH : 0.0, 1.0 - abs(bH));
+                // --- Green Primary ---
+                float gH = uPrimaryHue.y * 0.45;
+                float gS = uPrimarySaturation.y * 0.8;
+                float gL = uPrimaryLightness.y * 0.35;
+                vec3 g_vec = vec3(max(0.0, -gH), 1.0 - abs(gH), max(0.0, gH));
+                g_vec += vec3(-gS * 0.5, gS, -gS * 0.5);
+                g_vec *= (1.0 + gL);
 
+                // --- Blue Primary ---
+                float bH = uPrimaryHue.z * 0.45;
+                float bS = uPrimarySaturation.z * 0.8;
+                float bL = uPrimaryLightness.z * 0.35;
+                vec3 b_vec = vec3(max(0.0, bH), max(0.0, -bH), 1.0 - abs(bH));
+                b_vec += vec3(-bS * 0.5, -bS * 0.5, bS);
+                b_vec *= (1.0 + bL);
+
+                // 3. Apply the matrix and recombine with neutral component
                 vec3 mixed = rgb.r * r_vec + rgb.g * g_vec + rgb.b * b_vec;
-
-                // 2. Saturation Shift (scales the mixed vector uniformly to strictly preserve hue ratio)
-                float total_rgb = rgb.r + rgb.g + rgb.b;
-                if (total_rgb > 0.0001) {
-                    float rS = uPrimarySaturation.x;
-                    float gS = uPrimarySaturation.y;
-                    float bS = uPrimarySaturation.z;
-                    
-                    float sat_scale = (rgb.r * rS + rgb.g * gS + rgb.b * bS) / total_rgb;
-                    
-                    if (sat_scale > 0.0) {
-                        mixed *= (1.0 + sat_scale);
-                    } else {
-                        vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
-                        float m_luma = dot(mixed, lumaWeights);
-                        mixed = mix(mixed, vec3(m_luma), -sat_scale);
-                    }
-                }
-
-                // 3. Lightness Shift
-                float rL = uPrimaryLightness.x * 0.5;
-                float gL = uPrimaryLightness.y * 0.5;
-                float bL = uPrimaryLightness.z * 0.5;
-                vec3 light_add = vec3(rgb.r * rL + rgb.g * gL + rgb.b * bL);
-
-                return vec3(minC) + mixed + light_add;
+                return vec3(minC) + mixed;
             }
 
             vec3 applyLutCurve(vec3 l, int curveType) {
