@@ -3032,7 +3032,7 @@ class Camera2Controller(private val context: Context) {
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
 
-                if (shouldMirrorStillCaptureToPreview()) {
+                if (!isRawCapture && shouldMirrorStillCaptureToPreview()) {
                     previewSurface?.let { addTarget(it) }
                 }
 
