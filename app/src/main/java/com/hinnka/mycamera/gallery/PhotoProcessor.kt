@@ -195,6 +195,21 @@ class PhotoProcessor(
             }
         }
 
+        if (source == null) {
+            val photoFile = GalleryManager.getPhotoFile(context, photoId)
+            if (photoFile.exists()) {
+                val bitmap = GalleryManager.loadBitmap(context, photoId, preserveHdr = true)
+                if (bitmap != null) {
+                    source = GainmapSourceSet(
+                        sdrBase = bitmap,
+                        sourceKind = SourceKind.SDR_BITMAP,
+                        confidence = if (metadata.hasEmbeddedGainmap) 1.0f else 0.5f,
+                        displayHdrSdrRatio = readDisplayHdrSdrRatio()
+                    )
+                }
+            }
+        }
+
         // If source was generated from DNG/YUV, and we have an AI denoised base, replace the sdrBase.
         // The AI base is persisted in ai_denoise.jpg so exports and HDR gainmaps never rerun the slow model.
         if (source != null && metadata.hasAiDenoisedBase) {

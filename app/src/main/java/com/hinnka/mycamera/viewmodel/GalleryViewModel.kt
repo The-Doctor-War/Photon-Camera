@@ -2580,11 +2580,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 var successCount = 0
 
                 withContext(Dispatchers.IO) {
-                    val lutId = defaultLutId.firstOrNull() ?: contentRepository.getAvailableLuts()
-                        .firstOrNull { it.isDefault }?.id
-                    val computationalAperture = defaultVirtualAperture.firstOrNull()?.let { if (it > 0f) it else null }
                     uris.forEach { uri ->
-                        val photoId = GalleryManager.importPhoto(context, uri, lutId, computationalAperture)
+                        val photoId = GalleryManager.importPhoto(context, uri, null, null)
                         if (photoId != null) {
                             successCount++
                         }

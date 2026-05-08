@@ -2543,7 +2543,8 @@ object GalleryManager {
 
     private fun detectEmbeddedGainmap(context: Context, photoFile: File): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || !photoFile.exists()) return false
-        return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), preserveHdr = true))
+        // Use a small maxEdge for performance; gainmap detection works on downsampled bitmaps.
+        return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), maxEdge = 512, preserveHdr = true))
     }
 
 
@@ -2651,7 +2652,7 @@ object GalleryManager {
                             width = processedBitmap.width,
                             height = processedBitmap.height,
                             rotation = 0,
-                            manualHdrEffectEnabled = userPrefs?.autoEnableHdr ?: false,
+                            manualHdrEffectEnabled = false,
                         )
                         saveMetadata(context, photoId, updatedMetadata)
 //                        if (updatedMetadata.computationalAperture != null) {
@@ -2672,11 +2673,7 @@ object GalleryManager {
                     val hasEmbeddedGainmap = detectEmbeddedGainmap(context, photoFile)
                     val updatedMetadata = currentMetadata.copy(
                         hasEmbeddedGainmap = hasEmbeddedGainmap,
-                        manualHdrEffectEnabled = if (hasEmbeddedGainmap) {
-                            true
-                        } else {
-                            userPrefs?.autoEnableHdr ?: false
-                        }
+                        manualHdrEffectEnabled = hasEmbeddedGainmap
                     )
                     saveMetadata(context, photoId, updatedMetadata)
 //                    if (metadata.computationalAperture != null) {

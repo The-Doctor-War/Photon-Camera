@@ -4,6 +4,7 @@ class UnifiedGainmapProducer(
     private val producers: List<GainmapProducer> = listOf(
         HlgGainmapProducer(),
         RawGainmapProducer(),
+        EmbeddedGainmapProducer(),
         EstimatedSdrGainmapProducer(),
     )
 ) : GainmapProducer {
