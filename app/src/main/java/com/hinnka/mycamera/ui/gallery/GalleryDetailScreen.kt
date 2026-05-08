@@ -116,15 +116,15 @@ fun GalleryDetailScreen(
     val deletePhotoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            // User confirmed deletion, delete internal photo
+        if (result.resultCode == Activity.RESULT_OK || viewModel.selectedTab == GalleryTab.PHOTON) {
+            // User confirmed deletion or we are in PHOTON tab (delete internal photo anyway)
             viewModel.deletePhotoAfterConfirmation { success ->
                 if (success && viewModel.currentPhotos.value.isEmpty()) {
                     onBack()
                 }
             }
         } else {
-            // User cancelled deletion
+            // User cancelled deletion in SYSTEM tab
             viewModel.clearDeleteRequest()
         }
     }

@@ -121,11 +121,11 @@ fun GalleryScreen(
     val batchDeleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            // User confirmed deletion, delete internal photos
+        if (result.resultCode == Activity.RESULT_OK || viewModel.selectedTab == GalleryTab.PHOTON) {
+            // User confirmed deletion or we are in PHOTON tab (delete internal photos anyway)
             viewModel.deleteBatchPhotosAfterConfirmation()
         } else {
-            // User cancelled deletion
+            // User cancelled deletion in SYSTEM tab
             viewModel.clearBatchDeleteRequest()
         }
     }
