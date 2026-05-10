@@ -107,6 +107,7 @@
     <string name="delete_confirm">删除这张照片吗？</string>
     <string name="delete_multiple_confirm">删除 %d 张照片吗？</string>
     <string name="delete_exported_photos">同时删除系统相册中的导出图</string>
+    <string name="delete_system_warning">注意：此操作将同步删除已导出至系统相册的照片。系统会弹出删除确认，即使拒绝也不影响删除 App 内的照片。</string>
     <string name="no_photos">暂无照片</string>
     <string name="photo_info">照片信息</string>
     <string name="video_info">视频信息</string>

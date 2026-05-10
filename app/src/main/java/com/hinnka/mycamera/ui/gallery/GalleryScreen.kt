@@ -483,28 +483,15 @@ fun GalleryScreen(
                     Text(
                         text = stringResource(R.string.delete_multiple_confirm, selectedPhotos.size)
                     )
-                    /*if (viewModel.selectedTab == GalleryTab.PHOTON) {
+                    if (viewModel.selectedTab == GalleryTab.PHOTON) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.clickable { deleteExported = !deleteExported }
-                        ) {
-                            Checkbox(
-                                checked = deleteExported,
-                                onCheckedChange = { deleteExported = it },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = Color(0xFFFF6B35),
-                                    uncheckedColor = Color.White.copy(alpha = 0.6f)
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.delete_exported_photos),
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 14.sp
-                            )
-                        }
-                    }*/
+                        Text(
+                            text = stringResource(R.string.delete_system_warning),
+                            color = Color.Red,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
                 }
             },
             confirmButton = {
