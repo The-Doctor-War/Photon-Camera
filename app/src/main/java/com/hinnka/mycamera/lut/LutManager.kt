@@ -131,6 +131,9 @@ class LutManager(private val context: Context) {
     // LUT 缓存
     private val lutCache = LruCache<String, LutConfig>(CACHE_SIZE)
 
+    // LUT 色彩倾向缓存 (ID -> [R, G, B])
+    private val tendencyCache = mutableMapOf<String, FloatArray>()
+
     // 可用 LUT 列表
     private var availableLuts: List<LutInfo> = emptyList()
 
@@ -259,6 +262,36 @@ class LutManager(private val context: Context) {
      */
     fun getCacheInfo(): String {
         return "LUT Cache: ${lutCache.size()}/${CACHE_SIZE}, hits=${lutCache.hitCount()}, misses=${lutCache.missCount()}"
+    }
+
+    /**
+     * 获取指定 LUT 的色彩倾向性（带缓存）
+     */
+    fun getLutTendency(id: String): FloatArray? {
+        tendencyCache[id]?.let { return it }
+        
+        val lutConfig = loadLut(id) ?: return null
+        val tendency = LutColorAnalyzer.analyzeTendency(lutConfig)
+        tendencyCache[id] = tendency
+        return tendency
+    }
+
+    /**
+     * 为指定颜色推荐最合适的 LUT 列表
+     * @param targetColor 目标颜色 (Color Int)
+     * @param limit 推荐数量
+     * @return 按匹配度排序的 LUT 列表
+     */
+    fun recommendLutsForColor(targetColor: Int, limit: Int = 5): List<LutInfo> {
+        return availableLuts
+            .mapNotNull { info ->
+                val tendency = getLutTendency(info.id) ?: return@mapNotNull null
+                val score = LutColorAnalyzer.calculateSuitability(targetColor, tendency)
+                info to score
+            }
+            .sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
     }
 
     // ========== 色彩配方持久化方法 ==========

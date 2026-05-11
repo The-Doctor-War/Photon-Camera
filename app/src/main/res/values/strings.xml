@@ -9,6 +9,14 @@
     <string name="timer">Timer</string>
     <string name="toolbox_title">Toolbox</string>
     <string name="toolbox_description">Utility tools and creative features</string>
+    <string name="color_walk_title">Color Walk</string>
+    <string name="color_walk_desc">A Color Walk is a form of mindfulness. By focusing on a specific color, we slow down and discover the hidden beauty in our daily surroundings. Choose a color that resonates with your mood today, and let it guide your perspective.</string>
+    <string name="color_walk_short_desc">Discover mindfulness through a journey of colors.</string>
+    <string name="color_walk_recommendations">Recommended Filters</string>
+    <string name="color_walk_random">Surprise Me</string>
+    <string name="color_walk_recommended_frame">Recommended Frame</string>
+    <string name="color_walk_apply_frame">Apply Frame</string>
+    <string name="color_walk_select_color">Select a Color</string>
     <string name="histogram">Histogram</string>
     <string name="grid">Grid</string>
     <string name="back">Back</string>

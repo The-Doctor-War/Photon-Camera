@@ -59,23 +59,6 @@ data class FrameEditorDraft(
                         fontWeight = FontWeight.BOLD,
                         line = -1
                     ),
-                    FrameElementDraft.Divider(
-                        orientation = DividerOrientation.VERTICAL,
-                        alignment = ElementAlignment.START,
-                        lengthDp = 36,
-                        thicknessDp = 1,
-                        color = 0xFFE0E0E0.toInt(),
-                        marginDp = 8,
-                        line = -1
-                    ),
-                    FrameElementDraft.Logo(
-                        logoType = LogoType.BRAND,
-                        alignment = ElementAlignment.START,
-                        sizeDp = 32,
-                        maxWidth = 128,
-                        marginDp = 8,
-                        line = -1
-                    ),
                     FrameElementDraft.Text(
                         textType = TextType.APERTURE,
                         alignment = ElementAlignment.END,
@@ -128,10 +111,11 @@ data class FrameEditorDraft(
                     )
                 } else {
                     FrameLayoutDraft(
-                        position = FramePosition.BOTTOM,
+                        position = FramePosition.BORDER,
                         heightDp = 80,
                         backgroundColor = Color.WHITE,
-                        paddingDp = 20
+                        paddingDp = 20,
+                        borderWidthDp = 4
                     )
                 },
                 elements = defaultElements,

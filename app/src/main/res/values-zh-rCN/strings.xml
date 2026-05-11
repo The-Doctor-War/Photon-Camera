@@ -9,6 +9,14 @@
     <string name="timer">定时器</string>
     <string name="toolbox_title">工具箱</string>
     <string name="toolbox_description">实用工具与创意功能</string>
+    <string name="color_walk_title">Color Walk</string>
+    <string name="color_walk_desc">“Color Walk（色彩漫步）”是一种观察世界的正念练习。通过专注于特定的颜色，我们能够放慢脚步，在平凡的日常中发现被忽视的美。选择一个此刻最能触动你的颜色，开启一段专属于你的视觉探索之旅。</string>
+    <string name="color_walk_short_desc">开启一段专注色彩的正念观察之旅</string>
+    <string name="color_walk_recommendations">推荐滤镜</string>
+    <string name="color_walk_random">遇见惊喜</string>
+    <string name="color_walk_recommended_frame">推荐边框</string>
+    <string name="color_walk_apply_frame">应用边框</string>
+    <string name="color_walk_select_color">选择一种颜色</string>
     <string name="histogram">直方图</string>
     <string name="grid">网格</string>
     <string name="back">返回</string>

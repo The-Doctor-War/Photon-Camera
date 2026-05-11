@@ -66,6 +66,7 @@ import com.hinnka.mycamera.lut.creator.LutCreatorScreen
 import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
 import com.hinnka.mycamera.screencapture.ScreenCaptureRenderConfigStore
 import com.hinnka.mycamera.ui.camera.CameraScreen
+import com.hinnka.mycamera.ui.camera.ColorWalkScreen
 import com.hinnka.mycamera.ui.camera.ToolboxScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
@@ -103,6 +104,7 @@ object Routes {
     const val LUT_CREATOR = "lut_creator"
     const val TOOLBOX = "toolbox"
     const val PHANTOM_PIP_CROP = "phantom_pip_crop"
+    const val COLOR_WALK = "color_walk"
 
     fun photoDetail(tab: GalleryTab = GalleryTab.PHOTON, index: Int = 0, photoId: String? = null) =
         "photo_detail/$tab/$index" + (if (photoId != null) "?photoId=$photoId" else "")
@@ -680,9 +682,15 @@ fun NavigationHost(
             composable(Routes.TOOLBOX) {
                 ToolboxScreen(
                     onBack = { navController.popBackStack() },
-                    onLutCreatorClick = {
-                        navController.navigate(Routes.LUT_CREATOR)
-                    }
+                    onLutCreatorClick = { navController.navigate(Routes.LUT_CREATOR) },
+                    onColorWalkClick = { navController.navigate(Routes.COLOR_WALK) }
+                )
+            }
+
+            composable(Routes.COLOR_WALK) {
+                ColorWalkScreen(
+                    viewModel = cameraViewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -36,6 +37,7 @@ data class ToolboxItem(
 fun ToolboxScreen(
     onBack: () -> Unit,
     onLutCreatorClick: () -> Unit,
+    onColorWalkClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
@@ -44,6 +46,12 @@ fun ToolboxScreen(
             descriptionRes = R.string.lut_creator_desc,
             icon = Icons.Default.Palette,
             onClick = onLutCreatorClick
+        ),
+        ToolboxItem(
+            titleRes = R.string.color_walk_title,
+            descriptionRes = R.string.color_walk_short_desc,
+            icon = Icons.Default.DirectionsWalk,
+            onClick = onColorWalkClick
         )
     )
 

@@ -2485,6 +2485,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * 为指定颜色推荐最合适的 LUT 列表
+     */
+    suspend fun recommendLutsForColor(color: Int): List<LutInfo> = withContext(Dispatchers.IO) {
+        contentRepository.lutManager.recommendLutsForColor(color)
+    }
+
     fun setPhantomLut(lutId: String?) {
         viewModelScope.launch {
             userPreferencesRepository.savePhantomLutConfig(lutId)
