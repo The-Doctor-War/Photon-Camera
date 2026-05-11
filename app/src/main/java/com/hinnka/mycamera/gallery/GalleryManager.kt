@@ -25,7 +25,6 @@ import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
-import com.hinnka.mycamera.processor.RawStackResult
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawProcessingPreferences
@@ -1135,66 +1134,44 @@ object GalleryManager {
                 return@withContext
             }
 
-            val firstImageWidth = image.width
-            val firstImageHeight = image.height
-
-            val rawMetadata = RawMetadata.create(
-                firstImageWidth,
-                firstImageHeight,
-                characteristics,
-                resolvedCaptureResult,
-                exposureBias,
-                RawDemosaicProcessor.getInstance().getRawColorSpace()
-            )
-            val rawProcessingBuffer = copyRawPlaneToCompactDirectBuffer(
-                source = image.planes[0].buffer,
-                width = firstImageWidth,
-                height = firstImageHeight,
-                rowStride = image.planes[0].rowStride
-            )
-
-            // Parallel DNG saving and RAW processing
-            val dngDeferred = processingScope.async(Dispatchers.IO) {
-                var dngSaveAttempted = false
-                FileOutputStream(tempDngFile).use { outputStream ->
-                    image.use {
-                        try {
-                            RawProcessor.saveToDng(
-                                image,
-                                characteristics,
-                                resolvedCaptureResult,
-                                outputStream,
-                                rotation,
-                                thumbnail
-                            )
-                            dngSaveAttempted = true
-                        } catch (e: Throwable) {
-                            PLog.e(TAG, "DNG save failed", e)
-                        }
+            var dngSaveAttempted = false
+            FileOutputStream(tempDngFile).use { outputStream ->
+                image.use {
+                    try {
+                        RawProcessor.saveToDng(
+                            image,
+                            characteristics,
+                            resolvedCaptureResult,
+                            outputStream,
+                            rotation,
+                            thumbnail
+                        )
+                        dngSaveAttempted = true
+                    } catch (e: Throwable) {
+                        PLog.e(TAG, "DNG save failed", e)
                     }
                 }
-                val dngWritten = dngSaveAttempted && tempDngFile.exists() && tempDngFile.length() > 0L
-                if (dngWritten) {
-                    patchSavedDngBlackLevel(tempDngFile, metadata)
-                    if (dngFile.exists()) dngFile.delete()
-                    if (!tempDngFile.renameTo(dngFile)) {
-                        tempDngFile.copyTo(dngFile, overwrite = true)
-                        tempDngFile.delete()
-                    }
-                    if (shouldAutoSave && exportDngWithRawExport) {
-                        exportDng(context, photoId, dngFile, metadata)
-                    }
-                }
-                dngWritten
+            }
+            val dngWritten = dngSaveAttempted && tempDngFile.exists() && tempDngFile.length() > 0L
+            if (!dngWritten) {
+                tempDngFile.delete()
+                return@withContext
+            }
+            patchSavedDngBlackLevel(tempDngFile, metadata)
+            if (dngFile.exists()) {
+                dngFile.delete()
+            }
+            if (!tempDngFile.renameTo(dngFile)) {
+                tempDngFile.copyTo(dngFile, overwrite = true)
+                tempDngFile.delete()
+            }
+            if (shouldAutoSave && exportDngWithRawExport) {
+                exportDng(context, photoId, dngFile, metadata)
             }
 
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
-                context = context,
-                rawBuffer = rawProcessingBuffer,
-                width = firstImageWidth,
-                height = firstImageHeight,
-                rowStride = firstImageWidth * 2,
-                metadata = rawMetadata,
+                context,
+                dngFile.absolutePath,
                 aspectRatio = aspectRatio,
                 cropRegion = metadata.cropRegion,
                 rotation = rotation,
@@ -1207,14 +1184,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
                 rawDcpId = metadata.rawDcpId
-            ) ?: run {
-                dngDeferred.await()
-                return@withContext
-            }
-            
-            // Wait for DNG save if needed later (though we process from buffer)
-            dngDeferred.await()
-            
+            ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
             if (metadata.isMirrored) {
@@ -1726,42 +1696,41 @@ object GalleryManager {
                 whiteLevel = rawMetadata.whiteLevel.toInt(),
                 whiteBalanceGains = rawMetadata.whiteBalanceGains,
                 noiseModel = rawMetadata.noiseProfile,
-                lensShading = rawMetadata.lensShadingMap,
-                lensShadingWidth = rawMetadata.lensShadingMapWidth,
-                lensShadingHeight = rawMetadata.lensShadingMapHeight,
+                lensShading = null,
+                lensShadingWidth = 0,
+                lensShadingHeight = 0,
             )
 
             val finalStackResult = rawStackResult ?: return@withContext
-            val fusedBuffer = finalStackResult.fusedBayerBuffer ?: return@withContext
 
-            // Parallel DNG saving and RAW processing from memory buffer
-            val dngDeferred = processingScope.async(Dispatchers.IO) {
-                trySaveStackedRawDng(
-                    context = context,
-                    photoId = photoId,
-                    dngFile = dngFile,
-                    fusedBayerBuffer = fusedBuffer,
-                    width = finalStackResult.width,
-                    height = finalStackResult.height,
-                    rawMetadata = rawMetadata,
-                    isNormalizedSensorData = finalStackResult.isNormalizedSensorData,
-                    characteristics = characteristics,
-                    captureResult = captureResult,
-                    rotation = rotation,
-                    thumbnail = null,
-                    metadata = metadata,
-                    shouldAutoSave = shouldAutoSave,
-                    exportDngWithRawExport = exportDngWithRawExport
-                )
-            }
-
-            val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
+            val dngWritten = trySaveStackedRawDng(
                 context = context,
-                rawBuffer = fusedBuffer,
+                photoId = photoId,
+                dngFile = dngFile,
+                fusedBayerBuffer = finalStackResult.fusedBayerBuffer ?: return@withContext,
                 width = finalStackResult.width,
                 height = finalStackResult.height,
-                rowStride = finalStackResult.width * 2, // 16-bit Bayer
-                metadata = rawMetadata.forStackRender(finalStackResult, images.size),
+                rawMetadata = rawMetadata,
+                isNormalizedSensorData = finalStackResult.isNormalizedSensorData,
+                characteristics = characteristics,
+                captureResult = captureResult,
+                rotation = rotation,
+                thumbnail = null,
+                metadata = metadata,
+                shouldAutoSave = shouldAutoSave,
+                exportDngWithRawExport = exportDngWithRawExport
+            )
+            if (!dngWritten) {
+                PLog.e(TAG, "Failed to persist stacked RAW DNG before rendering preview")
+                return@withContext
+            }
+            finalStackResult.fusedBayerBuffer = null
+            @Suppress("ExplicitGarbageCollectionCall")
+            System.gc()
+
+            val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
+                context,
+                dngFile.absolutePath,
                 aspectRatio = aspectRatio,
                 cropRegion = metadata.cropRegion,
                 rotation = rotation,
@@ -1774,17 +1743,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
                 rawDcpId = metadata.rawDcpId
-            ) ?: run {
-                dngDeferred.await()
-                finalStackResult.release()
-                return@withContext
-            }
-
-            // Wait for DNG save completion
-            dngDeferred.await()
-
-            finalStackResult.release()
-
+            ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
             if (metadata.isMirrored) {
@@ -1952,42 +1911,6 @@ object GalleryManager {
         if (patched) {
             PLog.d(TAG, "Applied DNG BlackLevel correction (${metadata.rawBlackLevelMode}) to ${dngFile.name}")
         }
-    }
-
-    private fun copyRawPlaneToCompactDirectBuffer(
-        source: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
-    ): ByteBuffer {
-        val bytesPerRow = width * 2
-        val output = ByteBuffer.allocateDirect(bytesPerRow * height).order(ByteOrder.nativeOrder())
-        val src = source.duplicate()
-        for (y in 0 until height) {
-            val rowStart = y * rowStride
-            src.limit(source.capacity())
-            src.position(rowStart)
-            src.limit(rowStart + bytesPerRow)
-            output.put(src)
-        }
-        output.position(0)
-        return output
-    }
-
-    private fun RawMetadata.forStackRender(stackResult: RawStackResult, frameCount: Int): RawMetadata {
-        if (!stackResult.isNormalizedSensorData) {
-            return this.copy(frameCount = frameCount)
-        }
-        return copy(
-            width = stackResult.width,
-            height = stackResult.height,
-            blackLevel = floatArrayOf(0f, 0f, 0f, 0f),
-            whiteLevel = 65535f,
-            lensShadingMap = null,
-            lensShadingMapWidth = 0,
-            lensShadingMapHeight = 0,
-            frameCount = frameCount
-        )
     }
 
 

@@ -130,80 +130,6 @@ class RawDemosaicProcessor {
         useRawAutoWhiteBalanceEstimate: Boolean
     ): DngRawData?
 
-    /**
-     * Native 方法：直接从内存 Buffer 处理 RAW 数据
-     */
-    private external fun processRawBufferNative(
-        rawBuffer: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
-        cfaPattern: Int,
-        blackLevel: FloatArray,
-        whiteLevel: Float,
-        wbGains: FloatArray,
-        colorMatrix: FloatArray,
-        noiseProfile: FloatArray,
-        lensShadingMap: FloatArray?,
-        lensShadingMapWidth: Int,
-        lensShadingMapHeight: Int,
-        xr: Float, yr: Float,
-        xg: Float, yg: Float,
-        xb: Float, yb: Float,
-        xw: Float, yw: Float,
-        useRawAutoWhiteBalanceEstimate: Boolean
-    ): DngRawData?
-
-    suspend fun processForHdrSources(
-        context: Context,
-        rawBuffer: ByteBuffer,
-        width: Int,
-        height: Int,
-        rowStride: Int,
-        metadata: RawMetadata,
-        aspectRatio: AspectRatio?,
-        cropRegion: Rect?,
-        rotation: Int,
-        exposureBias: Float = 0f,
-        rawExposureCompensation: Float = 0f,
-        rawAutoExposure: Boolean = true,
-        rawBlackPointCorrection: Float = 0f,
-        rawWhitePointCorrection: Float = 0f,
-        rawAutoWhiteBalanceEstimate: Boolean = false,
-        sharpeningValue: Float = 0f,
-        denoiseValue: Float? = null,
-        rawDcpId: String? = null,
-        dcpRenderPlan: DcpRenderPlan? = null,
-    ): RawHdrRenderResult? = withContext(glDispatcher) {
-        try {
-            processInternal(
-                context = context,
-                rawData = rawBuffer,
-                width = width,
-                height = height,
-                rowStride = rowStride,
-                metadata = metadata,
-                aspectRatio = aspectRatio,
-                cropRegion = cropRegion,
-                rotation = rotation,
-                exposureBias = exposureBias,
-                rawExposureCompensation = rawExposureCompensation,
-                rawAutoExposure = rawAutoExposure,
-                rawBlackPointCorrection = rawBlackPointCorrection,
-                rawWhitePointCorrection = rawWhitePointCorrection,
-                rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
-                sharpeningValue = sharpeningValue,
-                denoiseValue = denoiseValue,
-                rawDcpId = rawDcpId,
-                dcpRenderPlan = dcpRenderPlan,
-                includeHdrReference = true
-            )
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to process RAW buffer HDR sources", e)
-            null
-        }
-    }
-
     companion object {
         private const val TAG = "RawDemosaicProcessor"
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
@@ -562,39 +488,6 @@ class RawDemosaicProcessor {
             return@withContext null
         }
 
-        if (dngFile == null && actualMetadata.cfaPattern != RawMetadata.CFA_LINEAR_RGB) {
-            val linearRawData = processRawBufferNative(
-                actualRawData,
-                actualWidth,
-                actualHeight,
-                actualRowStride,
-                actualMetadata.cfaPattern,
-                actualMetadata.blackLevel,
-                actualMetadata.whiteLevel,
-                actualMetadata.whiteBalanceGains,
-                actualMetadata.colorCorrectionMatrix,
-                actualMetadata.noiseProfile,
-                actualMetadata.lensShadingMap,
-                actualMetadata.lensShadingMapWidth,
-                actualMetadata.lensShadingMapHeight,
-                ColorSpace.ProPhoto.xr, ColorSpace.ProPhoto.yr,
-                ColorSpace.ProPhoto.xg, ColorSpace.ProPhoto.yg,
-                ColorSpace.ProPhoto.xb, ColorSpace.ProPhoto.yb,
-                ColorSpace.ProPhoto.xw, ColorSpace.ProPhoto.yw,
-                rawAutoWhiteBalanceEstimate
-            )
-            if (linearRawData == null) {
-                PLog.e(TAG, "Native RAW buffer demosaic failed")
-                return@withContext null
-            }
-            dngRawDataCleanup = linearRawData
-            actualRawData = linearRawData.rawData
-            actualWidth = linearRawData.width
-            actualHeight = linearRawData.height
-            actualRowStride = linearRawData.rowStride
-            actualMetadata = convertDngRawDataToMetadata(linearRawData, exposureBias, actualMetadata)
-        }
-
         val resolvedDcpRenderPlan = dcpRenderPlan ?: rawDcpId?.let { dcpId ->
             val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps().firstOrNull { it.id == dcpId }
             if (dcpInfo == null) {
@@ -713,9 +606,7 @@ class RawDemosaicProcessor {
                     context = context,
                     metadata = actualMetadata,
                     sourceTextureId = demosaicTextureId,
-                    dcpRenderPlan = resolvedDcpRenderPlan,
-                    rotation = actualRotation,
-                    bounds = bounds
+                    dcpRenderPlan = resolvedDcpRenderPlan
                 )
             } else {
                 0f
@@ -1948,8 +1839,7 @@ class RawDemosaicProcessor {
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
         viewportWidth: Int = metadata.width,
-        viewportHeight: Int = metadata.height,
-        texMatrix: FloatArray? = null
+        viewportHeight: Int = metadata.height
     ) {
         val curveLut = ACR3Curve.samples()
         val outputTransform = computeWorkingToOutputTransform(ColorSpace.ProPhoto, ColorSpace.SRGB)
@@ -1988,12 +1878,11 @@ class RawDemosaicProcessor {
             1, false, transposeMatrix3x3(outputTransform), 0
         )
 
-        val inputTexMatrix = texMatrix ?: FloatArray(16).also {
-            GlMatrix.setIdentityM(it, 0)
-        }
+        val identityMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(identityMatrix, 0)
         GLES30.glUniformMatrix4fv(
             GLES30.glGetUniformLocation(combinedProgram, "uTexMatrix"),
-            1, false, inputTexMatrix, 0
+            1, false, identityMatrix, 0
         )
         checkGlError("renderCombinedPass matrices")
         drawQuad(combinedProgram)
@@ -2247,12 +2136,10 @@ class RawDemosaicProcessor {
         context: Context,
         metadata: RawMetadata,
         sourceTextureId: Int,
-        dcpRenderPlan: DcpRenderPlan?,
-        rotation: Int,
-        bounds: Rect
+        dcpRenderPlan: DcpRenderPlan?
     ): Float {
-        val meteringWidth = minOf(bounds.width(), 256).coerceAtLeast(1)
-        val meteringHeight = minOf(bounds.height(), 256).coerceAtLeast(1)
+        val meteringWidth = minOf(metadata.width, 256).coerceAtLeast(1)
+        val meteringHeight = minOf(metadata.height, 256).coerceAtLeast(1)
         return try {
             setupCombinedFramebuffer(meteringWidth, meteringHeight)
             renderCombinedPass(
@@ -2260,8 +2147,7 @@ class RawDemosaicProcessor {
                 inputTextureId = sourceTextureId,
                 dcpRenderPlan = dcpRenderPlan,
                 viewportWidth = meteringWidth,
-                viewportHeight = meteringHeight,
-                texMatrix = buildOutputTexMatrix(rotation, metadata.width, metadata.height, bounds)
+                viewportHeight = meteringHeight
             )
             val buffer = ByteBuffer
                 .allocateDirect(meteringWidth * meteringHeight * 4)
@@ -2358,19 +2244,6 @@ class RawDemosaicProcessor {
         GLES30.glViewport(0, 0, bounds.width(), bounds.height())
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
         GLES30.glUseProgram(passthroughProgram)
-        val texMatrix = buildOutputTexMatrix(rotation, width, height, bounds)
-        GLES30.glUniformMatrix4fv(
-            GLES30.glGetUniformLocation(passthroughProgram, "uTexMatrix"),
-            1, false, texMatrix, 0
-        )
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(passthroughProgram, "uTexture"), 0)
-        drawQuad(passthroughProgram)
-        checkGlError("renderOutputPass")
-    }
-
-    private fun buildOutputTexMatrix(rotation: Int, width: Int, height: Int, bounds: Rect): FloatArray {
         val isSwapped = rotation == 90 || rotation == 270
         val cropW: Float
         val cropH: Float
@@ -2393,7 +2266,15 @@ class RawDemosaicProcessor {
         GlMatrix.scaleM(texMatrix, 0, cropW / width, cropH / height, 1.0f)
         GlMatrix.rotateM(texMatrix, 0, -rotation.toFloat(), 0f, 0f, 1f)
         GlMatrix.translateM(texMatrix, 0, -0.5f, -0.5f, 0f)
-        return texMatrix
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(passthroughProgram, "uTexMatrix"),
+            1, false, texMatrix, 0
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(passthroughProgram, "uTexture"), 0)
+        drawQuad(passthroughProgram)
+        checkGlError("renderOutputPass")
     }
 
     private fun drawQuad(program: Int) {
