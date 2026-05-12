@@ -801,6 +801,9 @@
     <string name="settings_ai_model_select">点此选择模型…</string>
     <string name="settings_ai_model_fetching">正在请求列表…</string>
     <string name="settings_ai_model_empty">未找到任何可用模型</string>
+    <string name="settings_ai_model_custom">自定义…</string>
+    <string name="settings_ai_model_custom_dialog_title">自定义 AI 模型</string>
+    <string name="settings_ai_model_custom_dialog_desc">输入要使用的 AI 模型名称。</string>
     <string name="general">常用</string>
     <string name="imaging">影像</string>
     <string name="phantom">幻影</string>

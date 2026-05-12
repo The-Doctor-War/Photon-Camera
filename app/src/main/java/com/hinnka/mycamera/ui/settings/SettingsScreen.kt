@@ -316,6 +316,8 @@ fun SettingsScreen(
 
     // 日志查看器弹窗状态
     var showLogViewerDialog by remember { mutableStateOf(false) }
+    var showCustomAIModelDialog by remember { mutableStateOf(false) }
+    var customAIModelValue by remember { mutableStateOf("") }
     var softwareProcessingExpanded by remember { mutableStateOf(false) }
     var calibrationExpanded by remember { mutableStateOf(false) }
     var showGhostPermissionDialog by remember { mutableStateOf(false) }
@@ -849,15 +851,23 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
+                        val customModelLabel = stringResource(R.string.settings_ai_model_custom)
                         DropdownSettingItem(
                             title = stringResource(R.string.settings_ai_model),
                             description = stringResource(R.string.settings_ai_model_desc),
                             value = openAIModel ?: OpenAIApiClient.DEFAULT_MODEL,
-                            options = availableOpenAIModels,
+                            options = availableOpenAIModels + customModelLabel,
                             isLoading = isFetchingAIModels,
                             enabled = !openAIApiKey.isNullOrBlank(),
                             onExpanded = { viewModel.fetchAvailableAIModels() },
-                            onOptionSelected = { viewModel.setOpenAIModel(it) }
+                            onOptionSelected = {
+                                if (it == customModelLabel) {
+                                    customAIModelValue = openAIModel ?: ""
+                                    showCustomAIModelDialog = true
+                                } else {
+                                    viewModel.setOpenAIModel(it)
+                                }
+                            }
                         )
                     }
 
@@ -1543,6 +1553,52 @@ fun SettingsScreen(
     if (showLogViewerDialog) {
         LogViewerDialog(
             onDismiss = { showLogViewerDialog = false }
+        )
+    }
+
+    if (showCustomAIModelDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomAIModelDialog = false },
+            title = { Text(text = stringResource(R.string.settings_ai_model_custom_dialog_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.settings_ai_model_custom_dialog_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = customAIModelValue,
+                        onValueChange = { customAIModelValue = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFE5A324),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (customAIModelValue.isNotBlank()) {
+                            viewModel.setOpenAIModel(customAIModelValue.trim())
+                        }
+                        showCustomAIModelDialog = false
+                    }
+                ) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomAIModelDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
         )
     }
 

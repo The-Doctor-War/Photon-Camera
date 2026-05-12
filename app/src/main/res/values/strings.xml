@@ -806,6 +806,9 @@
     <string name="settings_ai_model_select">Select a model…</string>
     <string name="settings_ai_model_fetching">Fetching…</string>
     <string name="settings_ai_model_empty">No models found</string>
+    <string name="settings_ai_model_custom">Custom…</string>
+    <string name="settings_ai_model_custom_dialog_title">Custom AI Model</string>
+    <string name="settings_ai_model_custom_dialog_desc">Enter the name of the AI model to use.</string>
     <string name="general">General</string>
     <string name="imaging">Imaging</string>
     <string name="phantom">Phantom</string>
