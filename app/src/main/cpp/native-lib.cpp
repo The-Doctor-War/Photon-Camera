@@ -517,26 +517,34 @@ static bool applySupportedDngGainMaps(LibRaw &rawProcessor, const float blackLev
                            : rawWidth;
   auto *rawImage = rawProcessor.imgdata.rawdata.raw_image;
 
-  const float colScale = static_cast<float>(gainMaps[0].mapPointsH - 1) /
-                         std::max(1, rawWidth);
-  const float rowScale = static_cast<float>(gainMaps[0].mapPointsV - 1) /
-                         std::max(1, rawHeight);
-
   const DngGainMap *mapByParity[2][2] = {};
   for (const auto &gainMap : gainMaps) {
     mapByParity[gainMap.top & 1u][gainMap.left & 1u] = &gainMap;
   }
 
+  const int activeWidth = std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.width));
+  const int activeHeight = std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.height));
+  const int leftMargin = static_cast<int>(rawProcessor.imgdata.sizes.left_margin);
+  const int topMargin = static_cast<int>(rawProcessor.imgdata.sizes.top_margin);
+
   for (int y = 0; y < rawHeight; ++y) {
-    const float ys = static_cast<float>(y) * rowScale;
     const float rowBlack[2] = {blackLevels[rawProcessor.FC(y, 0)], blackLevels[rawProcessor.FC(y, 1)]};
-    float xs = 0.0f;
-    for (int x = 0; x < rawWidth; ++x, xs += colScale) {
+    const float normY = (static_cast<float>(y - topMargin) + 0.5f) / static_cast<float>(activeHeight);
+
+    for (int x = 0; x < rawWidth; ++x) {
       const DngGainMap *gainMap = mapByParity[y & 1][x & 1];
       if (!gainMap) {
         continue;
       }
-      const float gain = sampleDngGainMapBilinear(*gainMap, xs, ys);
+
+      const float normX = (static_cast<float>(x - leftMargin) + 0.5f) / static_cast<float>(activeWidth);
+
+      const float spacingH = static_cast<float>(gainMap->mapSpacingH);
+      const float spacingV = static_cast<float>(gainMap->mapSpacingV);
+      const float mapX = spacingH > 0.0f ? (normX - static_cast<float>(gainMap->mapOriginH)) / spacingH : 0.0f;
+      const float mapY = spacingV > 0.0f ? (normY - static_cast<float>(gainMap->mapOriginV)) / spacingV : 0.0f;
+
+      const float gain = sampleDngGainMapBilinear(*gainMap, mapX, mapY);
       const float black = rowBlack[x & 1];
       float corrected = (static_cast<float>(rawImage[y * rawPitch + x]) - black) * gain + black;
       corrected = std::max(corrected, 0.0f);

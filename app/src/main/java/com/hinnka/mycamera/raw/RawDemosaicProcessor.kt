@@ -5,14 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.media.Image
 import android.opengl.*
-import android.util.Log
-import com.hinnka.mycamera.data.ContentRepository
+import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.ml.SharedDepthEstimator
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
-
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -23,12 +22,10 @@ import java.nio.FloatBuffer
 import java.nio.ShortBuffer
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sqrt
 import android.opengl.Matrix as GlMatrix
-import androidx.core.graphics.createBitmap
-import kotlin.math.ln
-import kotlin.math.pow
 
 /**
  * RAW 图像解马赛克处理器
@@ -1873,10 +1870,16 @@ class RawDemosaicProcessor {
         val combinedLut = if (shadowLift > 0f) {
             FloatArray(baseCurve.size) { i ->
                 val v = baseCurve[i]
-                val liftBase = v.toDouble().pow(0.75).toFloat() - v
-                val blackToe = (v / 0.01f).coerceAtMost(1.0f)
-                val lift = shadowLift * liftBase * (1.0f - v) * blackToe
-                (v + lift * 1.5f).coerceIn(0f, 1f)
+                val gammaPower = 0.75f
+                val shadowRangeEnd = 0.6f
+                val blackProtectStart = 0.02f
+                val black = 0.004f
+                val liftBase = (v.pow(gammaPower) - v).coerceAtLeast(0f)
+                val shadowMask = smoothstep(shadowRangeEnd, 0.02f, v)
+                val blackProtect = smoothstep(black, blackProtectStart, v)
+                val liftStrength = 1.35f
+                val lift = shadowLift * liftBase * liftStrength * shadowMask * blackProtect
+                (v + lift - black).coerceIn(0f, 1f)
             }
         } else {
             baseCurve
@@ -1926,6 +1929,11 @@ class RawDemosaicProcessor {
         checkGlError("renderCombinedPass matrices")
         drawQuad(combinedProgram)
         checkGlError("renderCombinedPass")
+    }
+
+    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
+        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
     }
 
     private fun logProgramLinkResult(program: Int, name: String): Boolean {
