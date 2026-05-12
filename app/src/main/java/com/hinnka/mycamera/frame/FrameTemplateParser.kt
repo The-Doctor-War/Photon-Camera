@@ -135,7 +135,8 @@ object FrameTemplateParser {
             nameMap = parseNameMap(obj.opt("name")),
             version = obj.optInt("version", 1),
             layout = parseLayout(obj.getJSONObject("layout")),
-            elements = parseElements(obj.getJSONArray("elements"))
+            elements = parseElements(obj.getJSONArray("elements")),
+            elementsTop = obj.optJSONArray("elementsTop")?.let { parseElements(it) }
         )
     }
 
@@ -169,6 +170,13 @@ object FrameTemplateParser {
                     put(serializeElement(element))
                 }
             })
+            template.elementsTop?.let { elementsTop ->
+                put("elementsTop", JSONArray().apply {
+                    elementsTop.forEach { element ->
+                        put(serializeElement(element))
+                    }
+                })
+            }
         }
         return obj.toString(2)
     }
@@ -191,30 +199,38 @@ object FrameTemplateParser {
         }
 
         template.elements.forEachIndexed { index, element ->
-            when (element) {
-                is FrameElement.Text -> {
-                    if (element.fontSizeSp < 0) errors += "elements[$index].fontSize"
-                }
+            validateElement(element, "elements[$index]", errors)
+        }
 
-                is FrameElement.Logo -> {
-                    if (element.sizeDp < 0) errors += "elements[$index].size"
-                    if (element.maxWidth < 0) errors += "elements[$index].maxWidth"
-                    if (element.marginDp < 0) errors += "elements[$index].margin"
-                }
-
-                is FrameElement.Divider -> {
-                    if (element.lengthDp < 0) errors += "elements[$index].length"
-                    if (element.thicknessDp < 0) errors += "elements[$index].thickness"
-                    if (element.marginDp < 0) errors += "elements[$index].margin"
-                }
-
-                is FrameElement.Spacer -> {
-                    if (element.widthDp < 0) errors += "elements[$index].width"
-                }
-            }
+        template.elementsTop?.forEachIndexed { index, element ->
+            validateElement(element, "elementsTop[$index]", errors)
         }
 
         return errors
+    }
+
+    private fun validateElement(element: FrameElement, path: String, errors: MutableList<String>) {
+        when (element) {
+            is FrameElement.Text -> {
+                if (element.fontSizeSp < 0) errors += "$path.fontSize"
+            }
+
+            is FrameElement.Logo -> {
+                if (element.sizeDp < 0) errors += "$path.size"
+                if (element.maxWidth < 0) errors += "$path.maxWidth"
+                if (element.marginDp < 0) errors += "$path.margin"
+            }
+
+            is FrameElement.Divider -> {
+                if (element.lengthDp < 0) errors += "$path.length"
+                if (element.thicknessDp < 0) errors += "$path.thickness"
+                if (element.marginDp < 0) errors += "$path.margin"
+            }
+
+            is FrameElement.Spacer -> {
+                if (element.widthDp < 0) errors += "$path.width"
+            }
+        }
     }
     
     /**

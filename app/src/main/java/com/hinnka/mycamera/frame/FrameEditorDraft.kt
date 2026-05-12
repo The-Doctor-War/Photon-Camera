@@ -15,15 +15,19 @@ data class FrameEditorDraft(
     val name: String = "",
     val layout: FrameLayoutDraft = FrameLayoutDraft(),
     val elements: List<FrameElementDraft> = emptyList(),
+    val elementsTop: List<FrameElementDraft>? = null,
     val selectedElementId: String? = elements.firstOrNull()?.draftId,
 ) {
     val effectiveSelectedElementId: String?
-        get() = selectedElementId?.takeIf { id -> elements.any { it.draftId == id } }
-            ?: elements.firstOrNull()?.draftId
+        get() = selectedElementId?.takeIf { id ->
+            elements.any { it.draftId == id } || elementsTop?.any { it.draftId == id } == true
+        } ?: elements.firstOrNull()?.draftId ?: elementsTop?.firstOrNull()?.draftId
 
     fun withSelectedElement(elementId: String?): FrameEditorDraft {
-        val resolvedId = elementId?.takeIf { id -> elements.any { it.draftId == id } }
-        return copy(selectedElementId = resolvedId ?: elements.firstOrNull()?.draftId)
+        val resolvedId = elementId?.takeIf { id ->
+            elements.any { it.draftId == id } || elementsTop?.any { it.draftId == id } == true
+        }
+        return copy(selectedElementId = resolvedId ?: elements.firstOrNull()?.draftId ?: elementsTop?.firstOrNull()?.draftId)
     }
 
     fun toTemplate(templateId: String): FrameTemplate {
@@ -37,6 +41,11 @@ data class FrameEditorDraft(
                 emptyList()
             } else {
                 elements.map { it.toFrameElement() }
+            },
+            elementsTop = if (layout.position == FramePosition.BOTH) {
+                elementsTop?.map { it.toFrameElement() }
+            } else {
+                null
             }
         )
     }
@@ -128,6 +137,7 @@ data class FrameEditorDraft(
             frameInfo: FrameInfo? = null
         ): FrameEditorDraft {
             val elements = template.elements.map { FrameElementDraft.fromElement(it) }
+            val elementsTop = template.elementsTop?.map { FrameElementDraft.fromElement(it) }
             return FrameEditorDraft(
                 sourceFrameId = template.id,
                 editableFrameId = template.id.takeIf { frameInfo?.isBuiltIn == false },
@@ -135,6 +145,7 @@ data class FrameEditorDraft(
                 name = template.getName(),
                 layout = FrameLayoutDraft.fromLayout(template.layout),
                 elements = elements,
+                elementsTop = elementsTop,
                 selectedElementId = elements.firstOrNull()?.draftId
             )
         }

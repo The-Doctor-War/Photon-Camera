@@ -574,7 +574,7 @@ private fun FrameBasicTab(
                             onDraftChange(draft.copy(layout = draft.layout.copy(lineSpacingDp = it.coerceAtLeast(0))))
                         }
                     )
-                    if (draft.layout.position == FramePosition.BORDER) {
+                    if (draft.layout.position == FramePosition.BORDER || draft.layout.position == FramePosition.BOTH) {
                         IntField(
                             label = stringResource(R.string.frame_editor_layout_border_width),
                             value = draft.layout.borderWidthDp,
@@ -654,21 +654,33 @@ private fun FrameElementsTab(
     var editingElementId by remember(draft.sourceFrameId, draft.editableFrameId) {
         mutableStateOf<String?>(null)
     }
+    var editingTop by remember { mutableStateOf(false) }
+
+    val currentElements = if (editingTop) {
+        draft.elementsTop ?: draft.elements
+    } else {
+        draft.elements
+    }
+
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
         val fromId = from.key as? String ?: return@rememberReorderableLazyListState
         val toId = to.key as? String ?: return@rememberReorderableLazyListState
-        val fromIndex = draft.elements.indexOfFirst { it.draftId == fromId }
-        val toIndex = draft.elements.indexOfFirst { it.draftId == toId }
+        val fromIndex = currentElements.indexOfFirst { it.draftId == fromId }
+        val toIndex = currentElements.indexOfFirst { it.draftId == toId }
         if (fromIndex == -1 || toIndex == -1) return@rememberReorderableLazyListState
 
-        val updated = draft.elements.toMutableList().apply {
+        val updated = currentElements.toMutableList().apply {
             add(toIndex, removeAt(fromIndex))
         }
-        onDraftChange(draft.copy(elements = updated))
+        if (editingTop) {
+            onDraftChange(draft.copy(elementsTop = updated))
+        } else {
+            onDraftChange(draft.copy(elements = updated))
+        }
     }
 
-    val selectedElement = draft.elements.firstOrNull { it.draftId == draft.effectiveSelectedElementId }
-    val editingElement = draft.elements.firstOrNull { it.draftId == editingElementId }
+    val selectedElement = currentElements.firstOrNull { it.draftId == draft.effectiveSelectedElementId }
+    val editingElement = currentElements.firstOrNull { it.draftId == editingElementId }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -676,6 +688,65 @@ private fun FrameElementsTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (draft.layout.position == FramePosition.BOTH) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val bottomSelected = !editingTop
+                    Surface(
+                        onClick = { editingTop = false },
+                        color = if (bottomSelected) AccentOrange.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(
+                                width = 1.dp,
+                                color = if (bottomSelected) AccentOrange else Color.Transparent,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                    ) {
+                        Text(
+                            text = stringResource(R.string.frame_editor_position_bottom),
+                            color = if (bottomSelected) AccentOrange else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp)
+                        )
+                    }
+
+                    Surface(
+                        onClick = {
+                            if (draft.elementsTop == null) {
+                                onDraftChange(draft.copy(elementsTop = draft.elements.map { duplicateElement(it) }))
+                            }
+                            editingTop = true
+                        },
+                        color = if (editingTop) AccentOrange.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(
+                                width = 1.dp,
+                                color = if (editingTop) AccentOrange else Color.Transparent,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                    ) {
+                        Text(
+                            text = stringResource(R.string.frame_editor_position_top),
+                            color = if (editingTop) AccentOrange else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             SectionCard(title = stringResource(R.string.frame_editor_section_elements)) {
                 Box {
@@ -696,12 +767,22 @@ private fun FrameElementsTab(
                                 text = { Text(frameElementTypeLabel(type)) },
                                 onClick = {
                                     val newElement = createDraftElement(type)
-                                    onDraftChange(
-                                        draft.copy(
-                                            elements = draft.elements + newElement,
-                                            selectedElementId = newElement.draftId
+                                    val updated = currentElements + newElement
+                                    if (editingTop) {
+                                        onDraftChange(
+                                            draft.copy(
+                                                elementsTop = updated,
+                                                selectedElementId = newElement.draftId
+                                            )
                                         )
-                                    )
+                                    } else {
+                                        onDraftChange(
+                                            draft.copy(
+                                                elements = updated,
+                                                selectedElementId = newElement.draftId
+                                            )
+                                        )
+                                    }
                                     editingElementId = newElement.draftId
                                     onShowAddMenuChange(false)
                                 }
@@ -712,7 +793,7 @@ private fun FrameElementsTab(
             }
         }
 
-        items(draft.elements, key = { it.draftId }) { element ->
+        items(currentElements, key = { it.draftId }) { element ->
             ReorderableItem(reorderableState, key = element.draftId) { isDragging ->
                 ElementListItem(
                     element = element,
@@ -728,25 +809,44 @@ private fun FrameElementsTab(
                     },
                     onDuplicate = {
                         val duplicated = duplicateElement(element)
-                        onDraftChange(
-                            draft.copy(
-                                elements = draft.elements + duplicated,
-                                selectedElementId = duplicated.draftId
+                        val updated = currentElements + duplicated
+                        if (editingTop) {
+                            onDraftChange(
+                                draft.copy(
+                                    elementsTop = updated,
+                                    selectedElementId = duplicated.draftId
+                                )
                             )
-                        )
+                        } else {
+                            onDraftChange(
+                                draft.copy(
+                                    elements = updated,
+                                    selectedElementId = duplicated.draftId
+                                )
+                            )
+                        }
                         editingElementId = duplicated.draftId
                     },
                     onDelete = {
-                        val updated = draft.elements.filterNot { it.draftId == element.draftId }
+                        val updated = currentElements.filterNot { it.draftId == element.draftId }
                         if (editingElementId == element.draftId) {
                             editingElementId = null
                         }
-                        onDraftChange(
-                            draft.copy(
-                                elements = updated,
-                                selectedElementId = updated.firstOrNull()?.draftId
+                        if (editingTop) {
+                            onDraftChange(
+                                draft.copy(
+                                    elementsTop = updated,
+                                    selectedElementId = updated.firstOrNull()?.draftId
+                                )
                             )
-                        )
+                        } else {
+                            onDraftChange(
+                                draft.copy(
+                                    elements = updated,
+                                    selectedElementId = updated.firstOrNull()?.draftId
+                                )
+                            )
+                        }
                     },
                     dragModifier = Modifier.draggableHandle()
                 )
@@ -755,8 +855,9 @@ private fun FrameElementsTab(
 
     }
 
-    LaunchedEffect(editingElementId, draft.elements) {
-        if (editingElementId != null && draft.elements.none { it.draftId == editingElementId }) {
+    LaunchedEffect(editingElementId, draft.elements, draft.elementsTop) {
+        val allElements = draft.elements + (draft.elementsTop ?: emptyList())
+        if (editingElementId != null && allElements.none { it.draftId == editingElementId }) {
             editingElementId = null
         }
     }
@@ -1349,10 +1450,17 @@ private fun duplicateElement(element: FrameElementDraft): FrameElementDraft {
 }
 
 private fun updateElement(draft: FrameEditorDraft, updated: FrameElementDraft): FrameEditorDraft {
-    return draft.copy(
-        elements = draft.elements.map { if (it.draftId == updated.draftId) updated else it },
-        selectedElementId = updated.draftId
-    )
+    return if (draft.elementsTop?.any { it.draftId == updated.draftId } == true) {
+        draft.copy(
+            elementsTop = draft.elementsTop.map { if (it.draftId == updated.draftId) updated else it },
+            selectedElementId = updated.draftId
+        )
+    } else {
+        draft.copy(
+            elements = draft.elements.map { if (it.draftId == updated.draftId) updated else it },
+            selectedElementId = updated.draftId
+        )
+    }
 }
 
 private fun updateTextElementById(
@@ -1360,16 +1468,29 @@ private fun updateTextElementById(
     elementId: String,
     updater: (FrameElementDraft.Text) -> FrameElementDraft.Text
 ): FrameEditorDraft {
-    return draft.copy(
-        elements = draft.elements.map { element ->
-            if (element is FrameElementDraft.Text && element.draftId == elementId) {
-                updater(element)
-            } else {
-                element
-            }
-        },
-        selectedElementId = elementId
-    )
+    return if (draft.elementsTop?.any { it.draftId == elementId } == true) {
+        draft.copy(
+            elementsTop = draft.elementsTop.map { element ->
+                if (element is FrameElementDraft.Text && element.draftId == elementId) {
+                    updater(element)
+                } else {
+                    element
+                }
+            },
+            selectedElementId = elementId
+        )
+    } else {
+        draft.copy(
+            elements = draft.elements.map { element ->
+                if (element is FrameElementDraft.Text && element.draftId == elementId) {
+                    updater(element)
+                } else {
+                    element
+                }
+            },
+            selectedElementId = elementId
+        )
+    }
 }
 
 private fun updateLogoElementById(
@@ -1377,16 +1498,29 @@ private fun updateLogoElementById(
     elementId: String,
     updater: (FrameElementDraft.Logo) -> FrameElementDraft.Logo
 ): FrameEditorDraft {
-    return draft.copy(
-        elements = draft.elements.map { element ->
-            if (element is FrameElementDraft.Logo && element.draftId == elementId) {
-                updater(element)
-            } else {
-                element
-            }
-        },
-        selectedElementId = elementId
-    )
+    return if (draft.elementsTop?.any { it.draftId == elementId } == true) {
+        draft.copy(
+            elementsTop = draft.elementsTop.map { element ->
+                if (element is FrameElementDraft.Logo && element.draftId == elementId) {
+                    updater(element)
+                } else {
+                    element
+                }
+            },
+            selectedElementId = elementId
+        )
+    } else {
+        draft.copy(
+            elements = draft.elements.map { element ->
+                if (element is FrameElementDraft.Logo && element.draftId == elementId) {
+                    updater(element)
+                } else {
+                    element
+                }
+            },
+            selectedElementId = elementId
+        )
+    }
 }
 
 private fun FrameEditorDraft.applyLegacyCustomProperties(properties: Map<String, String>): FrameEditorDraft {
@@ -1521,6 +1655,7 @@ private fun fontFamilyLabel(fontFamily: String?): String {
 private fun logoSourceOptions(): List<Pair<String?, String>> = listOf(
     null to stringResource(R.string.default_text),
     "none" to stringResource(R.string.none),
+    "photon" to "Photon Camera",
     "apple" to "Apple",
     "samsung" to "Samsung",
     "xiaomi" to "Xiaomi",

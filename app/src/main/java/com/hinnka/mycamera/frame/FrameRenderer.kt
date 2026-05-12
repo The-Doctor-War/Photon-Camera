@@ -78,8 +78,8 @@ class FrameRenderer(
             }
 
             FramePosition.BOTH -> {
-                outputWidth = originalBitmap.width
-                outputHeight = originalBitmap.height + frameHeight * 2
+                outputWidth = originalBitmap.width + borderWidth * 2
+                outputHeight = originalBitmap.height + frameHeight * 2 + borderWidth * 2
             }
 
             FramePosition.OVERLAY -> {
@@ -106,20 +106,41 @@ class FrameRenderer(
         // OVERLAY 模式不需要绘制整体背景
         if (layout.position != FramePosition.OVERLAY) {
             // 首先填充整体背景色（作为边框颜色）
-            backgroundPaint.color = if (layout.position == FramePosition.BORDER) layout.borderColor else layout.backgroundColor
+            val hasBorder = layout.position == FramePosition.BORDER || (layout.position == FramePosition.BOTH && borderWidth > 0)
+            backgroundPaint.color = if (hasBorder) layout.borderColor else layout.backgroundColor
             canvas.drawRect(0f, 0f, outputWidth.toFloat(), outputHeight.toFloat(), backgroundPaint)
 
-            // 如果是 BORDER 模式，则在文字区域填充背景色
-            if (layout.position == FramePosition.BORDER) {
+            // 如果有边框，则在文字区域填充背景色
+            if (hasBorder) {
                 backgroundPaint.color = layout.backgroundColor
-                val infoTop = (originalBitmap.height + borderWidth).toFloat()
-                canvas.drawRect(
-                    borderWidth.toFloat(),
-                    infoTop,
-                    (outputWidth - borderWidth).toFloat(),
-                    (outputHeight - borderWidth).toFloat(),
-                    backgroundPaint
-                )
+                if (layout.position == FramePosition.BORDER) {
+                    val infoTop = (originalBitmap.height + borderWidth).toFloat()
+                    canvas.drawRect(
+                        borderWidth.toFloat(),
+                        infoTop,
+                        (outputWidth - borderWidth).toFloat(),
+                        (outputHeight - borderWidth).toFloat(),
+                        backgroundPaint
+                    )
+                } else if (layout.position == FramePosition.BOTH) {
+                    // 顶部信息区背景
+                    canvas.drawRect(
+                        borderWidth.toFloat(),
+                        borderWidth.toFloat(),
+                        (outputWidth - borderWidth).toFloat(),
+                        (frameHeight + borderWidth).toFloat(),
+                        backgroundPaint
+                    )
+                    // 底部信息区背景
+                    val infoTop = (originalBitmap.height + frameHeight + borderWidth).toFloat()
+                    canvas.drawRect(
+                        borderWidth.toFloat(),
+                        infoTop,
+                        (outputWidth - borderWidth).toFloat(),
+                        (outputHeight - borderWidth).toFloat(),
+                        backgroundPaint
+                    )
+                }
             }
         }
 
@@ -139,8 +160,8 @@ class FrameRenderer(
             }
 
             FramePosition.BOTH -> {
-                photoLeft = 0f
-                photoTop = frameHeight.toFloat()
+                photoLeft = borderWidth.toFloat()
+                photoTop = (frameHeight + borderWidth).toFloat()
             }
 
             FramePosition.OVERLAY -> {
@@ -182,20 +203,20 @@ class FrameRenderer(
             FramePosition.BOTH -> {
                 // 顶部
                 drawFrameContent(
-                    canvas, template.elements, metadata, template.layout,
-                    left = padding.toFloat(),
-                    top = 0f,
-                    right = (outputWidth - padding).toFloat(),
-                    bottom = frameHeight.toFloat(),
+                    canvas, template.elementsTop ?: template.elements, metadata, template.layout,
+                    left = (borderWidth + padding).toFloat(),
+                    top = borderWidth.toFloat(),
+                    right = (outputWidth - borderWidth - padding).toFloat(),
+                    bottom = (frameHeight + borderWidth).toFloat(),
                     scale = scale
                 )
                 // 底部
                 drawFrameContent(
                     canvas, template.elements, metadata, template.layout,
-                    left = padding.toFloat(),
-                    top = (originalBitmap.height + frameHeight).toFloat(),
-                    right = (outputWidth - padding).toFloat(),
-                    bottom = outputHeight.toFloat(),
+                    left = (borderWidth + padding).toFloat(),
+                    top = (originalBitmap.height + frameHeight + borderWidth).toFloat(),
+                    right = (outputWidth - borderWidth - padding).toFloat(),
+                    bottom = (outputHeight - borderWidth).toFloat(),
                     scale = scale
                 )
             }
@@ -641,7 +662,9 @@ class FrameRenderer(
                     LogoType.BRAND -> getBrandLogoDrawable(logoKey ?: metadata?.brand, element.light)
                 }
                 val drawable = context.getDrawable(drawableRes) ?: return 0 to 0
-                drawableToBitmap(drawable, size, size)
+                val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else size
+                val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else size
+                drawableToBitmap(drawable, w, h)
             } ?: return 0 to 0
 
             val intrinsicW = bitmap.width
@@ -729,6 +752,7 @@ class FrameRenderer(
      * 未找到对应资源时使用通用图标
      */
     private val logoMap = mapOf(
+        "photon" to listOf(R.drawable.ic_photon, R.drawable.ic_photon_light),
         "samsung" to listOf(R.drawable.ic_brand_samsung, R.drawable.ic_brand_samsung),
         "xiaomi" to listOf(R.drawable.ic_brand_xiaomi, R.drawable.ic_brand_xiaomi),
         "redmi" to listOf(R.drawable.ic_brand_xiaomi, R.drawable.ic_brand_xiaomi),

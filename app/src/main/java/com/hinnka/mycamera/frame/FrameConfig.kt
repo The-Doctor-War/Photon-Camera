@@ -50,7 +50,8 @@ data class FrameTemplate(
     val nameMap: Map<String, String>,
     val version: Int = 1,
     val layout: FrameLayout,
-    val elements: List<FrameElement>
+    val elements: List<FrameElement>,
+    val elementsTop: List<FrameElement>? = null
 ) {
     fun getName(locale: java.util.Locale = java.util.Locale.getDefault()): String {
         val language = if (locale.language == "zh") "zh" else "en"
