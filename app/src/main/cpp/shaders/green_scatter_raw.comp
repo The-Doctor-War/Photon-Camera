@@ -45,6 +45,7 @@ layout(set = 0, binding = 4, scalar) buffer FlowVarianceBuffer { float data[]; }
 layout(set = 0, binding = 5, scalar) buffer GreenPhase0 { uvec2 data[]; } greenPhase0;
 layout(set = 0, binding = 6, scalar) buffer GreenPhase1 { uvec2 data[]; } greenPhase1;
 layout(set = 0, binding = 7) uniform sampler2D uLensShadingMap;
+layout(set = 0, binding = 8, scalar) buffer LocalTileMask { float weights[]; } localTileMask;
 
 const float kAccumScale = 2048.0;
 
@@ -136,6 +137,14 @@ int getGreenFamily(int cfaPattern, ivec2 samplePos, out int lscIdx) {
         if (phase == 1) { lscIdx = 2; return 1; }
     }
     return -1;
+}
+
+float sampleLocalTileWeight(ivec2 planePos) {
+    uint localTileSize = 16u;
+    uint tilesX = (pc.planeWidth + localTileSize - 1u) / localTileSize;
+    uint tx = min(uint(max(planePos.x, 0)) / localTileSize, tilesX - 1u);
+    uint ty = uint(max(planePos.y, 0)) / localTileSize;
+    return clamp(localTileMask.weights[ty * tilesX + tx], 0.0, 1.0);
 }
 
 void splatSample(int phaseIndex, vec2 outCenter, vec2 refPos, float val,
@@ -238,6 +247,7 @@ void processGreenPlane(ivec2 samplePlane, int planeIndex) {
         uint confidenceIdx = rY * int(pc.planeWidth) + rX;
         pInlier = outRobustness.data[confidenceIdx];
         flowVar = flowVarianceBuffer.data[confidenceIdx];
+        pInlier *= sampleLocalTileWeight(ivec2(rX, rY));
     }
     splatSample(family, outCenter, refPos, val, pInlier * highlightSuppression,
                 flowVar);

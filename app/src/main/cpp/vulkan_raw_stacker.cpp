@@ -28,7 +28,7 @@
 constexpr uint32_t kDenseAlignmentGridSpacing = 8;
 constexpr int kAlignmentRegularizationPasses = 2;
 constexpr float kAlignmentOutlierThreshold = 0.65f;
-constexpr bool kEnableRawSuperResPerfLogs = true;
+constexpr bool kEnableRawSuperResPerfLogs = false;
 constexpr bool kFastPath = false;
 
 using PerfClock = std::chrono::steady_clock;
@@ -816,7 +816,7 @@ void VulkanRawStacker::createPipelines() {
       green_scatter_raw_comp_spv_size);
 
   // --- 5. Color Scatter Pipeline (R/B) ---
-  VkDescriptorSetLayoutBinding csBindings[8] = {};
+  VkDescriptorSetLayoutBinding csBindings[9] = {};
   csBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                    VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
   csBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
@@ -833,10 +833,12 @@ void VulkanRawStacker::createPipelines() {
                    VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
   csBindings[7] = {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                    VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+  csBindings[8] = {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                   VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
 
   VkDescriptorSetLayoutCreateInfo csLayoutInfo{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  csLayoutInfo.bindingCount = 8;
+  csLayoutInfo.bindingCount = 9;
   csLayoutInfo.pBindings = csBindings;
   vkCreateDescriptorSetLayout(device, &csLayoutInfo, nullptr,
                               &colorScatterSetLayout);
@@ -1097,6 +1099,30 @@ struct RobustnessSummary {
   float weak05Fraction = 0.0f;
 };
 
+struct FusionParticipationSummary {
+  size_t totalPixels = 0;
+  size_t projectedPixels = 0;
+  size_t activePixels = 0;
+  size_t strongPixels = 0;
+  double robustnessWeightedPixels = 0.0;
+
+  double projectedFraction() const {
+    return totalPixels > 0 ? (double)projectedPixels / (double)totalPixels : 0.0;
+  }
+
+  double activeFraction() const {
+    return totalPixels > 0 ? (double)activePixels / (double)totalPixels : 0.0;
+  }
+
+  double strongFraction() const {
+    return totalPixels > 0 ? (double)strongPixels / (double)totalPixels : 0.0;
+  }
+
+  double weightedFraction() const {
+    return totalPixels > 0 ? robustnessWeightedPixels / (double)totalPixels : 0.0;
+  }
+};
+
 struct LocalReliabilitySummary {
   ScalarStats tileRobustness;
   float edgeTileFraction = 0.0f;
@@ -1320,6 +1346,121 @@ inline void logRefinedFieldDiagnostics(size_t frameIndex, float frameWeight,
        "flow90=%.2f contr=%.3f",
        frameIndex, frameWeight, rs.values.meanValue, rs.values.p50,
        rs.weak05Fraction, flow.magnitude.p90, frameWeight * rs.values.meanValue);
+}
+
+inline Point sampleAlignmentField(const std::vector<Point> &alignment,
+                                  uint32_t gridW, uint32_t gridH,
+                                  uint32_t tileSize, float planeX,
+                                  float planeY) {
+  if (alignment.empty() || gridW == 0 || gridH == 0 || tileSize == 0)
+    return {0.0f, 0.0f};
+
+  float gx = planeX / (float)tileSize - 0.5f;
+  float gy = planeY / (float)tileSize - 0.5f;
+  int x0 = (int)std::floor(gx);
+  int y0 = (int)std::floor(gy);
+  float fx = gx - (float)x0;
+  float fy = gy - (float)y0;
+  int x1 = x0 + 1;
+  int y1 = y0 + 1;
+  x0 = std::clamp(x0, 0, (int)gridW - 1);
+  y0 = std::clamp(y0, 0, (int)gridH - 1);
+  x1 = std::clamp(x1, 0, (int)gridW - 1);
+  y1 = std::clamp(y1, 0, (int)gridH - 1);
+
+  auto at = [&](int x, int y) -> Point {
+    size_t idx = (size_t)y * gridW + (size_t)x;
+    return idx < alignment.size() ? alignment[idx] : Point{0.0f, 0.0f};
+  };
+
+  Point p00 = at(x0, y0);
+  Point p10 = at(x1, y0);
+  Point p01 = at(x0, y1);
+  Point p11 = at(x1, y1);
+  Point top{p00.x + (p10.x - p00.x) * fx, p00.y + (p10.y - p00.y) * fx};
+  Point bottom{p01.x + (p11.x - p01.x) * fx,
+               p01.y + (p11.y - p01.y) * fx};
+  return {top.x + (bottom.x - top.x) * fy,
+          top.y + (bottom.y - top.y) * fy};
+}
+
+inline bool splatTouchesOutput(float outCenterX, float outCenterY,
+                               uint32_t outputW, uint32_t outputH) {
+  int baseX = (int)std::floor(outCenterX);
+  int baseY = (int)std::floor(outCenterY);
+  return baseX + 2 >= 0 && baseY + 2 >= 0 && baseX - 1 < (int)outputW &&
+         baseY - 1 < (int)outputH;
+}
+
+inline FusionParticipationSummary computeFusionParticipation(
+    uint32_t sensorW, uint32_t sensorH, uint32_t planeW, uint32_t planeH,
+    uint32_t outputW, uint32_t outputH, float scale,
+    const std::vector<float> &robustness, const std::vector<Point> &alignment,
+    uint32_t gridW, uint32_t gridH, uint32_t tileSize, bool isReference) {
+  FusionParticipationSummary summary;
+  if (sensorW == 0 || sensorH == 0 || planeW == 0 || planeH == 0 ||
+      outputW == 0 || outputH == 0)
+    return summary;
+
+  const size_t robustCount = robustness.size();
+  for (uint32_t y = 0; y < planeH; ++y) {
+    for (uint32_t x = 0; x < planeW; ++x) {
+      uint32_t rawPixelCount = 0;
+      for (uint32_t dy = 0; dy < 2; ++dy) {
+        for (uint32_t dx = 0; dx < 2; ++dx) {
+          if (x * 2 + dx < sensorW && y * 2 + dy < sensorH)
+            ++rawPixelCount;
+        }
+      }
+      if (rawPixelCount == 0)
+        continue;
+
+      summary.totalPixels += rawPixelCount;
+
+      Point flow{0.0f, 0.0f};
+      if (!isReference) {
+        flow = sampleAlignmentField(alignment, gridW, gridH, tileSize,
+                                    (float)x, (float)y);
+      }
+      float refX = (float)x - flow.x;
+      float refY = (float)y - flow.y;
+      if (!splatTouchesOutput(refX * scale, refY * scale, outputW, outputH))
+        continue;
+
+      summary.projectedPixels += rawPixelCount;
+
+      float r = 1.0f;
+      size_t idx = (size_t)y * planeW + x;
+      if (!isReference) {
+        r = idx < robustCount ? robustness[idx] : 0.0f;
+        if (!std::isfinite(r))
+          r = 0.0f;
+        r = std::clamp(r, 0.0f, 1.0f);
+      }
+      summary.robustnessWeightedPixels += (double)rawPixelCount * (double)r;
+      if (r >= 0.15f)
+        summary.activePixels += rawPixelCount;
+      if (r >= 0.5f)
+        summary.strongPixels += rawPixelCount;
+    }
+  }
+  return summary;
+}
+
+inline void logFusionParticipation(size_t frameIndex, bool skipped,
+                                   float frameWeight,
+                                   const FusionParticipationSummary &summary) {
+  if (!kEnableRawSuperResPerfLogs)
+    return;
+  LOGI("RawSuperResFusionCoverage frame[%zu]: skipped=%d weight=%.3f "
+       "projected=%zu/%zu(%.2f%%) activeR015=%zu/%zu(%.2f%%) "
+       "strongR05=%zu/%zu(%.2f%%) weightedR=%.2f%%",
+       frameIndex, skipped ? 1 : 0, frameWeight, summary.projectedPixels,
+       summary.totalPixels, summary.projectedFraction() * 100.0,
+       summary.activePixels, summary.totalPixels,
+       summary.activeFraction() * 100.0, summary.strongPixels,
+       summary.totalPixels, summary.strongFraction() * 100.0,
+       summary.weightedFraction() * 100.0);
 }
 
 inline void logRefinedFieldDiagnostics(VkDevice device, VkDeviceMemory alignMem,
@@ -2412,6 +2553,8 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                             VK_WHOLE_SIZE, 6);
   updateImageDescriptorSet(device, colorScatterSets[0], lscView, lscSampler,
                            7);
+  updateBufferDescriptorSet(device, colorScatterSets[0], localTileMaskBuffer,
+                            VK_WHOLE_SIZE, 8);
   updateBufferDescriptorSet(device, referenceNormalizeSet,
                             normalizedReferenceBuffer, VK_WHOLE_SIZE, 1);
   updateImageDescriptorSet(device, referenceNormalizeSet, lscView, lscSampler,
@@ -2694,21 +2837,12 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
         continue;
       }
 
-      // --- PERFORMANCE SHORTCUT ---
-      // If coarse alignment is already excellent, skip the expensive 
-      // full-resolution refined alignment.
       ScalarStats errStats = computeScalarStats(frameAlignments[i].coarseAlign.errorMap.data(),
                                                frameAlignments[i].coarseAlign.errorMap.size());
       float errRms = std::sqrt(std::max(errStats.p50, 0.0f));
       if (errRms < 1.15f) {
-        // Frame is perfectly aligned, reuse coarse field and skip refined check
-        frameRefinedCaches[i].alignment = frameAlignments[i].seededFlow;
-        frameRefinedCaches[i].robustness.assign((size_t)inputW * inputH, 1.0f);
-        frameRefinedCaches[i].valid = true;
-        runGlobalReliability[i] = false;
-        continue;
+        frameRetentionScores[i] *= 1.05f;
       }
-
       coarseCandidates.emplace_back(frameRetentionScores[i], i);
     }
     std::sort(coarseCandidates.begin(), coarseCandidates.end(),
@@ -3273,6 +3407,8 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
 
         const auto localMaskUploadStart = PerfClock::now();
         updateBufferDescriptorSet(device, greenScatterSet,
+                                  frameMaskBuffers[i].buffer, VK_WHOLE_SIZE, 8);
+        updateBufferDescriptorSet(device, colorScatterSets[0],
                                   frameMaskBuffers[i].buffer, VK_WHOLE_SIZE, 8);
         perf.localMaskUploadMs += elapsedMillis(localMaskUploadStart);
         if (!kFastPath && !isRef &&
@@ -3864,6 +4000,18 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
     perf.totalEffectiveFrames = 1.0; // Reference frame
     double sumRobustness = 1.0;
     double sumWeakFraction = 0.0;
+    size_t totalCandidatePixels = 0;
+    size_t totalProjectedPixels = 0;
+    size_t totalActivePixels = 0;
+    size_t totalStrongPixels = 0;
+    double totalWeightedPixels = 0.0;
+
+    FusionParticipationSummary refParticipation = computeFusionParticipation(
+        width, height, inputW, inputH, outputW, outputH, (float)scale,
+        std::vector<float>(), std::vector<Point>(), (uint32_t)gridW,
+        (uint32_t)gridH, (uint32_t)tileSize, true);
+    logFusionParticipation(0, false, 1.0f, refParticipation);
+
     for (size_t i = 1; i < pendingFrames.size(); ++i) {
       if (!skipFusionFrame[i] && frameRefinedCaches[i].valid) {
         RobustnessSummary rs = readRobustnessSummary(
@@ -3884,7 +4032,36 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
               computeScalarStats(magnitudes.data(), magnitudes.size());
         }
         logRefinedFieldDiagnostics(i, frameFusionWeights[i], rs, flow);
+
+        FusionParticipationSummary participation = computeFusionParticipation(
+            width, height, inputW, inputH, outputW, outputH, (float)scale,
+            frameRefinedCaches[i].robustness, frameRefinedCaches[i].alignment,
+            (uint32_t)gridW, (uint32_t)gridH, (uint32_t)tileSize, false);
+        logFusionParticipation(i, false, frameFusionWeights[i],
+                               participation);
+        totalCandidatePixels += participation.totalPixels;
+        totalProjectedPixels += participation.projectedPixels;
+        totalActivePixels += participation.activePixels;
+        totalStrongPixels += participation.strongPixels;
+        totalWeightedPixels += participation.robustnessWeightedPixels;
+      } else {
+        FusionParticipationSummary participation;
+        participation.totalPixels = (size_t)inputW * inputH * 4u;
+        logFusionParticipation(i, true, frameFusionWeights[i], participation);
       }
+    }
+    if (totalCandidatePixels > 0) {
+      LOGI("RawSuperResFusionCoverage nonRefTotal: projected=%zu/%zu(%.2f%%) "
+           "activeR015=%zu/%zu(%.2f%%) strongR05=%zu/%zu(%.2f%%) "
+           "weightedR=%.2f%%",
+           totalProjectedPixels, totalCandidatePixels,
+           100.0 * (double)totalProjectedPixels /
+               (double)totalCandidatePixels,
+           totalActivePixels, totalCandidatePixels,
+           100.0 * (double)totalActivePixels / (double)totalCandidatePixels,
+           totalStrongPixels, totalCandidatePixels,
+           100.0 * (double)totalStrongPixels / (double)totalCandidatePixels,
+           100.0 * totalWeightedPixels / (double)totalCandidatePixels);
     }
     if (perf.keptFrames > 0) {
       perf.avgRobustness = (double)sumRobustness / (double)perf.keptFrames;

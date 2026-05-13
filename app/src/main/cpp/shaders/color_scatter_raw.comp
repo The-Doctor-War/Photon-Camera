@@ -40,6 +40,7 @@ layout(set = 0, binding = 4, scalar) buffer ColorAccum0 { uvec2 data[]; } colorA
 layout(set = 0, binding = 5, scalar) buffer ColorAccum1 { uvec2 data[]; } colorAccum1;
 layout(set = 0, binding = 6, scalar) buffer FlowVarianceBuffer { float data[]; } flowVarianceBuffer;
 layout(set = 0, binding = 7) uniform sampler2D uLensShadingMap;
+layout(set = 0, binding = 8, scalar) buffer LocalTileMask { float weights[]; } localTileMask;
 
 const float kAccumScale = 2048.0;
 
@@ -127,6 +128,14 @@ bool sampleMatchesPlane(ivec2 pos, uint planeIndex, out int lscIdx) {
     return false;
 }
 
+float sampleLocalTileWeight(ivec2 planePos) {
+    uint localTileSize = 16u;
+    uint tilesX = (pc.planeWidth + localTileSize - 1u) / localTileSize;
+    uint tx = min(uint(max(planePos.x, 0)) / localTileSize, tilesX - 1u);
+    uint ty = uint(max(planePos.y, 0)) / localTileSize;
+    return clamp(localTileMask.weights[ty * tilesX + tx], 0.0, 1.0);
+}
+
 void processPlane(ivec2 samplePlane, uint planeIndex) {
     ivec2 sampleOffset = getBayerOffset(int(pc.cfaPattern), int(planeIndex));
     if (samplePlane.x < 0 || samplePlane.y < 0 ||
@@ -166,6 +175,7 @@ void processPlane(ivec2 samplePlane, uint planeIndex) {
         uint confidenceIdx = rY * int(pc.planeWidth) + rX;
         pInlier = outRobustness.data[confidenceIdx] * highlightSuppression;
         flowVar = flowVarianceBuffer.data[confidenceIdx];
+        pInlier *= sampleLocalTileWeight(ivec2(rX, rY));
     }
 
     vec2 planeRef = clamp(refPlanePos, vec2(0.0), vec2(float(pc.planeWidth - 1u), float(pc.planeHeight - 1u)));
