@@ -214,8 +214,6 @@ fun CustomSliderThinThumb(
     thumbColor: Color = Color.White
 ) {
     var isDragging by remember { mutableStateOf(false) }
-    var internalValue by remember(value) { mutableStateOf(value) }
-
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
     val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
@@ -226,7 +224,7 @@ fun CustomSliderThinThumb(
     val trackHeightPx = with(density) { trackHeight.toPx() }
 
     // 确保值在范围内
-    val coercedValue = internalValue.coerceIn(valueRange.start, valueRange.endInclusive)
+    val coercedValue = value.coerceIn(valueRange.start, valueRange.endInclusive)
 
     // 计算归一化的值（0-1）
     val normalizedValue = (coercedValue - valueRange.start) / (valueRange.endInclusive - valueRange.start)
@@ -243,16 +241,8 @@ fun CustomSliderThinThumb(
                     if (!enabled) return@pointerInput
                     detectDragGestures(
                         onDragStart = { isDragging = true },
-                        onDragEnd = {
-                            isDragging = false
-                            currentOnValueChange(internalValue)
-                            currentOnValueChangeFinished?.invoke()
-                        },
-                        onDragCancel = {
-                            isDragging = false
-                            currentOnValueChange(internalValue)
-                            currentOnValueChangeFinished?.invoke()
-                        }
+                        onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
+                        onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
                     ) { change, _ ->
                         change.consume()
                         val trackWidth = size.width - thumbWidthPx
@@ -260,7 +250,7 @@ fun CustomSliderThinThumb(
                         val x = change.position.x.coerceIn(trackStart, trackStart + trackWidth)
                         val fraction = (x - trackStart) / trackWidth
                         val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
-                        internalValue = newValue.coerceIn(valueRange.start, valueRange.endInclusive)
+                        currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
                     }
                 }
                 .pointerInput(enabled, valueRange, thumbWidthPx) {
@@ -275,9 +265,7 @@ fun CustomSliderThinThumb(
                             val x = offset.x.coerceIn(trackStart, trackStart + trackWidth)
                             val fraction = (x - trackStart) / trackWidth
                             val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
-                            val finalValue = newValue.coerceIn(valueRange.start, valueRange.endInclusive)
-                            internalValue = finalValue
-                            currentOnValueChange(finalValue)
+                            currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
                             currentOnValueChangeFinished?.invoke()
                         }
                     )

@@ -1343,7 +1343,7 @@ private fun ZoomableImage(
     val context = LocalContext.current
 
     var isLoading by remember { mutableStateOf(true) }
-    val maxZoom = min(photo.width, photo.height) / 300f
+    val maxZoom = min(photo.width, photo.height) / 100f
     val zoomableState = rememberZoomableImageState(
         zoomableState = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = maxZoom))
     )
