@@ -362,6 +362,9 @@
     <string name="common_categories">已有分類</string>
     <string name="delete_category_title">刪除分類</string>
     <string name="delete_category_message">確認刪除分類 "%s"？該分類下的濾鏡將被設為未分類。</string>
+    <string name="favorite">收藏</string>
+    <string name="add_to_favorites">加入收藏</string>
+    <string name="remove_from_favorites">取消收藏</string>
     <string name="built_in">內建</string>
     <string name="custom">自訂</string>
     <string name="uncategorized">未分类</string>

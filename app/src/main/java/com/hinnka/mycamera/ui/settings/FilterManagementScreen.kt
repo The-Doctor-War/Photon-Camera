@@ -57,11 +57,12 @@ private data class CategoryManagementItem(
 
 private fun sanitizeCustomLutCategoryInput(
     category: String,
+    favoriteText: String,
     builtInText: String,
     uncategorizedText: String
 ): String {
     val trimmedCategory = category.trim()
-    return if (trimmedCategory == builtInText || trimmedCategory == uncategorizedText) {
+    return if (trimmedCategory == favoriteText || trimmedCategory == builtInText || trimmedCategory == uncategorizedText) {
         ""
     } else {
         trimmedCategory
@@ -193,23 +194,26 @@ fun FilterManagementScreen(
 
     val builtInText = stringResource(R.string.built_in)
     val uncategorizedText = stringResource(R.string.uncategorized)
-    val reservedCategoryNames = remember(builtInText, uncategorizedText) {
-        setOf(builtInText, uncategorizedText)
+    val favoriteText = stringResource(R.string.favorite)
+    val reservedCategoryNames = remember(favoriteText, builtInText, uncategorizedText) {
+        setOf(favoriteText, builtInText, uncategorizedText)
     }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val categories = remember(localLutList, categoryOrder, builtInText, uncategorizedText, reservedCategoryNames) {
+    val categories = remember(localLutList, categoryOrder, favoriteText, builtInText, uncategorizedText, reservedCategoryNames) {
         orderedLutCategoryTitles(
             luts = localLutList,
             categoryOrder = categoryOrder,
             builtInText = builtInText,
-            uncategorizedText = uncategorizedText
+            uncategorizedText = uncategorizedText,
+            favoriteText = favoriteText
         )
     }
     val filteredLutList = remember(selectedTabIndex, localLutList, categories) {
         if (selectedTabIndex >= categories.size) return@remember localLutList
 
         when (val selectedCategory = categories[selectedTabIndex]) {
+            favoriteText -> localLutList.filter { it.isFavorite }
             builtInText -> localLutList.filter { it.isBuiltIn }
             uncategorizedText -> localLutList.filter { !it.isBuiltIn && it.category.isEmpty() }
             else -> localLutList.filter { it.category == selectedCategory }
@@ -228,8 +232,9 @@ fun FilterManagementScreen(
                 kotlinx.coroutines.delay(350)
                 
                 // 查找目标所属分类
-                val categoryName = if (targetLut.isBuiltIn) builtInText 
-                                 else if (targetLut.category.isEmpty()) uncategorizedText 
+                val categoryName = if (targetLut.isFavorite) favoriteText
+                                 else if (targetLut.isBuiltIn) builtInText
+                                 else if (targetLut.category.isEmpty()) uncategorizedText
                                  else targetLut.category
                 val categoryIndex = categories.indexOf(categoryName)
                 
@@ -241,6 +246,7 @@ fun FilterManagementScreen(
                 
                 // 重新获取当前分类下的列表并定位
                 val filteredLutsNow = when (categoryName) {
+                    favoriteText -> localLutList.filter { it.isFavorite }
                     builtInText -> localLutList.filter { it.isBuiltIn }
                     uncategorizedText -> localLutList.filter { !it.isBuiltIn && it.category.isEmpty() }
                     else -> localLutList.filter { it.category == categoryName }
@@ -669,6 +675,20 @@ fun FilterManagementScreen(
                                     showCategoryDialog = true
                                 }
                             } else null,
+                            onToggleFavorite = if (!isSelectionMode) {
+                                {
+                                    scope.launch {
+                                        val nextFavorite = !lutInfo.isFavorite
+                                        localLutList = localLutList.map {
+                                            if (it.id == lutInfo.id) it.copy(isFavorite = nextFavorite) else it
+                                        }
+                                        withContext(Dispatchers.IO) {
+                                            customImportManager.updateLutFavorite(lutInfo.id, nextFavorite)
+                                        }
+                                        viewModel.refreshCustomContent()
+                                    }
+                                }
+                            } else null,
                             showCategory = categories.getOrNull(currentTabIndex) == builtInText && lutInfo.category.isNotEmpty(),
                             dragModifier = if (isSelectionMode) Modifier else Modifier.draggableHandle()
                         )
@@ -886,6 +906,7 @@ fun FilterManagementScreen(
                         onClick = {
                             val sanitizedCategory = sanitizeCustomLutCategoryInput(
                                 category = categoryText,
+                                favoriteText = favoriteText,
                                 builtInText = builtInText,
                                 uncategorizedText = uncategorizedText
                             )
@@ -1127,6 +1148,7 @@ fun FilterManagementScreen(
                         onClick = {
                             val targetCategory = sanitizeCustomLutCategoryInput(
                                 category = categoryText,
+                                favoriteText = favoriteText,
                                 builtInText = builtInText,
                                 uncategorizedText = uncategorizedText
                             )
@@ -1589,6 +1611,7 @@ private fun FilterManagementItem(
     onDelete: (() -> Unit)?,
     onExport: (() -> Unit)? = null,
     onEditCategory: (() -> Unit)? = null,
+    onToggleFavorite: (() -> Unit)? = null,
     showCategory: Boolean = false,
     dragModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
@@ -1695,6 +1718,16 @@ private fun FilterManagementItem(
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     )
                 }
+
+                if (lutInfo.isFavorite) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = stringResource(R.string.favorite),
+                        tint = Color(0xFFFFD700),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
 
             if (isDefault) {
@@ -1747,6 +1780,30 @@ private fun FilterManagementItem(
                             onEditCategory?.invoke()
                         }
                     )
+
+                    if (onToggleFavorite != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(
+                                        if (lutInfo.isFavorite) R.string.remove_from_favorites else R.string.add_to_favorites
+                                    ),
+                                    color = Color.White
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (lutInfo.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                    null,
+                                    tint = Color(0xFFFFD700)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onToggleFavorite()
+                            }
+                        )
+                    }
 
                     // 重命名 (仅自定义)
                     if (onRename != null) {

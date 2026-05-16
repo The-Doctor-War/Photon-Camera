@@ -119,6 +119,7 @@ object LutParser {
                 val isDefault = lutObj.optBoolean("isDefault", false)
                 val isVip = lutObj.getBoolean("isVip")
                 val category = lutObj.optString("category", "Built-in")
+                val isFavorite = lutObj.optBoolean("isFavorite", false)
 
                 // 读取多语言名称
                 val nameMap = mutableMapOf<String, String>()
@@ -134,7 +135,8 @@ object LutParser {
                         isBuiltIn = true,
                         isDefault = isDefault,
                         isVip = isVip,
-                        category = category
+                        category = category,
+                        isFavorite = isFavorite
                     )
                 )
             }

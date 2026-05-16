@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private sealed class LutCategoryTab {
+    data object Favorite : LutCategoryTab()
     data object BuiltIn : LutCategoryTab()
     data object Uncategorized : LutCategoryTab()
     data class Category(val name: String) : LutCategoryTab()
@@ -69,19 +70,22 @@ fun LutSelector(
     val scrollState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var showLutEditDialogState by remember { mutableStateOf(false) }
+    val favoriteText = stringResource(R.string.favorite)
     val builtInText = stringResource(R.string.built_in)
     val uncategorizedText = stringResource(R.string.uncategorized)
 
     // 分类逻辑
-    val categoryTabs = remember(availableLuts, categoryOrder, builtInText, uncategorizedText) {
+    val categoryTabs = remember(availableLuts, categoryOrder, favoriteText, builtInText, uncategorizedText) {
+        val reservedCategoryNames = setOf(favoriteText, builtInText, uncategorizedText)
         val dynamicCategories = availableLuts.map { it.category }
             .distinct()
-            .filter { it.isNotEmpty() }
+            .filter { it.isNotEmpty() && it !in reservedCategoryNames }
         val hasUncategorizedLuts = availableLuts.any { !it.isBuiltIn && it.category.isEmpty() }
         val orderedEntries = categoryOrder.filter { it == builtInText || dynamicCategories.contains(it) }
         val remainingDynamic = dynamicCategories.filterNot { it in orderedEntries }.sorted()
 
         buildList {
+            add(LutCategoryTab.Favorite)
             if (orderedEntries.isEmpty()) {
                 add(LutCategoryTab.BuiltIn)
                 addAll(remainingDynamic.map(LutCategoryTab::Category))
@@ -101,22 +105,36 @@ fun LutSelector(
             }
         }
     }
-    var selectedCategory by remember(currentLutId, availableLuts) {
-        mutableStateOf(
-            availableLuts.find { it.id == currentLutId }?.let { lut ->
-                if (lut.isBuiltIn) {
-                    LutCategoryTab.BuiltIn
-                } else if (lut.category.isNotEmpty()) {
-                    LutCategoryTab.Category(lut.category)
-                } else {
-                    LutCategoryTab.Uncategorized
-                }
-            } ?: LutCategoryTab.BuiltIn
-        )
+    fun LutCategoryTab.contains(lut: LutInfo): Boolean = when (this) {
+        LutCategoryTab.Favorite -> lut.isFavorite
+        LutCategoryTab.BuiltIn -> lut.isBuiltIn
+        LutCategoryTab.Uncategorized -> !lut.isBuiltIn && lut.category.isEmpty()
+        is LutCategoryTab.Category -> lut.category == name
+    }
+
+    fun preferredCategoryFor(lut: LutInfo): LutCategoryTab = when {
+        lut.isFavorite -> LutCategoryTab.Favorite
+        lut.category.isNotEmpty() -> LutCategoryTab.Category(lut.category)
+        lut.isBuiltIn -> LutCategoryTab.BuiltIn
+        else -> LutCategoryTab.Uncategorized
+    }
+
+    var selectedCategory by remember { mutableStateOf<LutCategoryTab>(LutCategoryTab.BuiltIn) }
+
+    LaunchedEffect(currentLutId, availableLuts, categoryTabs) {
+        val selectedLut = availableLuts.find { it.id == currentLutId }
+        selectedCategory = when {
+            selectedLut?.isFavorite == true -> LutCategoryTab.Favorite
+            selectedLut != null && selectedCategory.contains(selectedLut) -> selectedCategory
+            selectedLut != null -> preferredCategoryFor(selectedLut)
+            selectedCategory in categoryTabs -> selectedCategory
+            else -> LutCategoryTab.BuiltIn
+        }
     }
 
     val filteredLuts = remember(selectedCategory, availableLuts) {
         when (selectedCategory) {
+            LutCategoryTab.Favorite -> availableLuts.filter { it.isFavorite }
             LutCategoryTab.BuiltIn -> availableLuts.filter { it.isBuiltIn }
             LutCategoryTab.Uncategorized -> availableLuts.filter { !it.isBuiltIn && it.category.isEmpty() }
             is LutCategoryTab.Category -> {
@@ -166,6 +184,7 @@ fun LutSelector(
                 items(categoryTabs) { category ->
                     val isSelected = selectedCategory == category
                     val categoryName = when (category) {
+                        LutCategoryTab.Favorite -> favoriteText
                         LutCategoryTab.BuiltIn -> builtInText
                         LutCategoryTab.Uncategorized -> uncategorizedText
                         is LutCategoryTab.Category -> category.name

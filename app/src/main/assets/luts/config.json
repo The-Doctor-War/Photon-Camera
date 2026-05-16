@@ -13,8 +13,8 @@
     {
       "id": "standard",
       "name": {
-        "en": "STD",
-        "zh": "STD"
+        "en": "Standard",
+        "zh": "标准"
       },
       "path": "standard.plut",
       "isDefault": true,

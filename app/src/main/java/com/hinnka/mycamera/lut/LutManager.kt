@@ -164,6 +164,7 @@ class LutManager(private val context: Context) {
         }
         val customLuts = customImportManager.getCustomLuts()
         val categoryOverrides = customImportManager.getCategoryOverrides()
+        val favoriteOverrides = customImportManager.getFavoriteOverrides()
 
         // 合并列表
         val allLuts = customLuts + builtInLuts
@@ -171,11 +172,11 @@ class LutManager(private val context: Context) {
         // 应用分类重写 (用户手动创建的分类会通过这里恢复)
         availableLuts = allLuts.map { lut ->
             val overriddenCategory = categoryOverrides[lut.id]
-            if (overriddenCategory != null) {
-                lut.copy(category = overriddenCategory)
-            } else {
-                lut
-            }
+            val overriddenFavorite = favoriteOverrides[lut.id]
+            lut.copy(
+                category = overriddenCategory ?: lut.category,
+                isFavorite = overriddenFavorite ?: lut.isFavorite
+            )
         }
 
         PLog.d(TAG, "Found ${availableLuts.size} LUT files (${customLuts.size} custom, ${builtInLuts.size} built-in)")

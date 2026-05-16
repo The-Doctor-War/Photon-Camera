@@ -41,6 +41,7 @@ class CustomImportManager(private val context: Context) {
         private const val CUSTOM_FRAME_CONFIG = "custom_frames.json"
         private const val CUSTOM_DCP_CONFIG = "custom_dcps.json"
         private const val CATEGORY_OVERRIDES_CONFIG = "category_overrides.json"
+        private const val FAVORITE_OVERRIDES_CONFIG = "favorite_overrides.json"
 
         // 自定义字体目录
         private const val CUSTOM_FONT_DIR = "custom_fonts"
@@ -77,6 +78,25 @@ class CustomImportManager(private val context: Context) {
             map
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to get category overrides", e)
+            emptyMap()
+        }
+    }
+
+    /**
+     * 获取收藏重写映射。
+     */
+    fun getFavoriteOverrides(): Map<String, Boolean> {
+        return try {
+            val file = File(context.filesDir, FAVORITE_OVERRIDES_CONFIG)
+            if (!file.exists()) return emptyMap()
+            val json = JSONObject(file.readText())
+            val map = mutableMapOf<String, Boolean>()
+            json.keys().forEach { key ->
+                map[key] = json.optBoolean(key, false)
+            }
+            map
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to get favorite overrides", e)
             emptyMap()
         }
     }
@@ -456,7 +476,8 @@ class CustomImportManager(private val context: Context) {
                         isBuiltIn = false,
                         isDefault = false,
                         isVip = false,
-                        category = lutObj.optString("category", "")
+                        category = lutObj.optString("category", ""),
+                        isFavorite = lutObj.optBoolean("isFavorite", false)
                     )
                 )
             }
@@ -634,6 +655,47 @@ class CustomImportManager(private val context: Context) {
             true
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to update LUT category", e)
+            false
+        }
+    }
+
+    /**
+     * 更新 LUT 收藏状态（支持内置和自定义）。
+     */
+    fun updateLutFavorite(lutId: String, isFavorite: Boolean): Boolean {
+        return try {
+            val overridesFile = File(context.filesDir, FAVORITE_OVERRIDES_CONFIG)
+            val overridesJson = if (overridesFile.exists()) {
+                JSONObject(overridesFile.readText())
+            } else {
+                JSONObject()
+            }
+            overridesJson.put(lutId, isFavorite)
+            overridesFile.writeText(overridesJson.toString())
+
+            val configFile = File(context.filesDir, CUSTOM_LUT_CONFIG)
+            if (configFile.exists()) {
+                val configJson = configFile.readText()
+                val jsonArray = JSONArray(configJson)
+                val newArray = JSONArray()
+                var updated = false
+                for (i in 0 until jsonArray.length()) {
+                    val lutObj = jsonArray.getJSONObject(i)
+                    if (lutObj.getString("id") == lutId) {
+                        lutObj.put("isFavorite", isFavorite)
+                        updated = true
+                    }
+                    newArray.put(lutObj)
+                }
+                if (updated) {
+                    configFile.writeText(newArray.toString())
+                }
+            }
+
+            PLog.d(TAG, "LUT favorite updated: $lutId -> $isFavorite")
+            true
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to update LUT favorite", e)
             false
         }
     }

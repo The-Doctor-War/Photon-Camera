@@ -488,6 +488,9 @@
     <string name="common_categories">Common Categories</string>
     <string name="delete_category_title">Delete Category</string>
     <string name="delete_category_message">Are you sure you want to delete category \"%s\"? LUTs under this category will be reset to uncategorized.</string>
+    <string name="favorite">Favorites</string>
+    <string name="add_to_favorites">Add to Favorites</string>
+    <string name="remove_from_favorites">Remove from Favorites</string>
     <string name="built_in">Built-in</string>
     <string name="custom">Custom</string>
     <string name="uncategorized">Uncategorized</string>

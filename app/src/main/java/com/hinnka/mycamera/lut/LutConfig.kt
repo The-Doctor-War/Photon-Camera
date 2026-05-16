@@ -108,6 +108,7 @@ data class LutInfo(
     val isDefault: Boolean = false, // 是否为默认 LUT
     val isVip: Boolean = false, // 是否为 VIP LUT
     val category: String = "", // 分类
+    val isFavorite: Boolean = false, // 是否收藏
 ) {
     /**
      * 获取显示名称（优先当前系统语言）
