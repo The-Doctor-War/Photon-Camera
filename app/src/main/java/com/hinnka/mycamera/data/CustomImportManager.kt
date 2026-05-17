@@ -43,6 +43,7 @@ class CustomImportManager(private val context: Context) {
         private const val CUSTOM_DCP_CONFIG = "custom_dcps.json"
         private const val CATEGORY_OVERRIDES_CONFIG = "category_overrides.json"
         private const val FAVORITE_OVERRIDES_CONFIG = "favorite_overrides.json"
+        private const val BUILT_IN_LUT_CATEGORY_INITIALIZED_CONFIG = "built_in_lut_categories_initialized.json"
 
         // 自定义字体目录
         private const val CUSTOM_FONT_DIR = "custom_fonts"
@@ -80,6 +81,46 @@ class CustomImportManager(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to get category overrides", e)
             emptyMap()
+        }
+    }
+
+    fun initializeBuiltInLutCategoriesIfNeeded(luts: List<LutInfo>) {
+        try {
+            val categorizedLuts = luts
+                .filter { it.isBuiltIn && it.category.isNotEmpty() }
+                .associate { it.id to it.category }
+            if (categorizedLuts.isEmpty()) return
+
+            val initializedFile = File(context.filesDir, BUILT_IN_LUT_CATEGORY_INITIALIZED_CONFIG)
+            val initializedJson = if (initializedFile.exists()) {
+                JSONObject(initializedFile.readText())
+            } else {
+                JSONObject()
+            }
+
+            val overridesFile = File(context.filesDir, CATEGORY_OVERRIDES_CONFIG)
+            val overridesJson = if (overridesFile.exists()) {
+                JSONObject(overridesFile.readText())
+            } else {
+                JSONObject()
+            }
+
+            var updatedCount = 0
+            categorizedLuts.forEach { (id, category) ->
+                if (!initializedJson.optBoolean(id, false)) {
+                    overridesJson.put(id, category)
+                    initializedJson.put(id, true)
+                    updatedCount++
+                }
+            }
+
+            if (updatedCount > 0) {
+                overridesFile.writeText(overridesJson.toString())
+                initializedFile.writeText(initializedJson.toString())
+            }
+            PLog.d(TAG, "Built-in LUT categories initialized: $updatedCount")
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to initialize built-in LUT categories", e)
         }
     }
 

@@ -10,6 +10,8 @@ enum class BaselineColorCorrectionTarget {
     PHANTOM
 }
 
+const val DEFAULT_RAW_BASELINE_LUT_ID = "lumix_std"
+
 data class BaselineColorCorrectionConfig(
     val lutId: String? = null
 )

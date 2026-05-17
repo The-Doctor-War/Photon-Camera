@@ -118,7 +118,7 @@ object LutParser {
                 val nameObj = lutObj.getJSONObject("name")
                 val isDefault = lutObj.optBoolean("isDefault", false)
                 val isVip = lutObj.getBoolean("isVip")
-                val category = lutObj.optString("category", "Built-in")
+                val category = lutObj.optString("category", "").trim()
                 val isFavorite = lutObj.optBoolean("isFavorite", false)
 
                 // 读取多语言名称

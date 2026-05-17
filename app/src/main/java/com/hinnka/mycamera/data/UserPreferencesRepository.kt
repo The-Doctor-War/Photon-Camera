@@ -13,6 +13,7 @@ import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
+import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.raw.RawProfile
@@ -68,6 +69,7 @@ data class UserPreferences(
     val phantomLutId: String? = null,
     val jpgBaselineLutId: String? = null,
     val rawBaselineLutId: String? = null,
+    val rawBaselineLutConfigured: Boolean = false,
     val phantomBaselineLutId: String? = null,
     val rawDcpId: String? = null,
     val rawNlmNoiseFactor: Float = 0f,
@@ -170,6 +172,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val PHANTOM_LUT_ID_KEY = stringPreferencesKey("phantom_lut_id")
         private val JPG_BASELINE_LUT_ID_KEY = stringPreferencesKey("jpg_baseline_lut_id")
         private val RAW_BASELINE_LUT_ID_KEY = stringPreferencesKey("raw_baseline_lut_id")
+        private val RAW_BASELINE_LUT_CONFIGURED_KEY = booleanPreferencesKey("raw_baseline_lut_configured")
         private val RAW_DCP_ID_KEY = stringPreferencesKey("raw_dcp_id")
         private val RAW_NLM_NOISE_FACTOR_KEY = floatPreferencesKey("raw_nlm_noise_factor")
         private val RAW_EXPOSURE_COMPENSATION_KEY = floatPreferencesKey("raw_exposure_compensation")
@@ -273,6 +276,8 @@ class UserPreferencesRepository(private val context: Context) {
         .map { preferences ->
             val customAspectRatios = parseCustomAspectRatios(preferences[CUSTOM_ASPECT_RATIOS])
             val availableAspectRatios = AspectRatio.entries + customAspectRatios
+            val rawBaselineLutConfigured = preferences[RAW_BASELINE_LUT_CONFIGURED_KEY]
+                ?: preferences.contains(RAW_BASELINE_LUT_ID_KEY)
             UserPreferences(
                 captureMode = CaptureMode.valueOf(preferences[CAPTURE_MODE] ?: CaptureMode.PHOTO.name),
                 aspectRatio = preferences[ASPECT_RATIO_KEY] ?: "RATIO_4_3",
@@ -284,7 +289,9 @@ class UserPreferencesRepository(private val context: Context) {
                 lutId = preferences[LUT_ID_KEY],  // 不提供默认值，由 CameraViewModel 处理
                 phantomLutId = preferences[PHANTOM_LUT_ID_KEY],
                 jpgBaselineLutId = preferences[JPG_BASELINE_LUT_ID_KEY],
-                rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY],
+                rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY]
+                    ?: if (!rawBaselineLutConfigured) DEFAULT_RAW_BASELINE_LUT_ID else null,
+                rawBaselineLutConfigured = rawBaselineLutConfigured,
                 rawDcpId = preferences[RAW_DCP_ID_KEY],
                 rawNlmNoiseFactor = preferences[RAW_NLM_NOISE_FACTOR_KEY] ?: 0f,
                 rawExposureCompensation = preferences[RAW_EXPOSURE_COMPENSATION_KEY] ?: 0f,
@@ -587,6 +594,9 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences[key] = lutId
             } else {
                 preferences.remove(key)
+            }
+            if (target == BaselineColorCorrectionTarget.RAW) {
+                preferences[RAW_BASELINE_LUT_CONFIGURED_KEY] = true
             }
         }
     }

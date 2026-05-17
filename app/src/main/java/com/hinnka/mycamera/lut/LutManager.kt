@@ -158,10 +158,9 @@ class LutManager(private val context: Context) {
      * 初始化，扫描可用的 LUT 文件（包括内置和自定义）
      */
     fun initialize() {
-        // 加载内置滤镜并强制把初始分类设为空（用户不想要内置分类标签）
-        val builtInLuts = LutParser.listAvailableLuts(context, BUILT_IN_LUT_FOLDER).map {
-            it.copy(category = "")
-        }
+        val configuredBuiltInLuts = LutParser.listAvailableLuts(context, BUILT_IN_LUT_FOLDER)
+        customImportManager.initializeBuiltInLutCategoriesIfNeeded(configuredBuiltInLuts)
+        val builtInLuts = configuredBuiltInLuts.map { it.copy(category = "") }
         val customLuts = customImportManager.getCustomLuts()
         val categoryOverrides = customImportManager.getCategoryOverrides()
         val favoriteOverrides = customImportManager.getFavoriteOverrides()
