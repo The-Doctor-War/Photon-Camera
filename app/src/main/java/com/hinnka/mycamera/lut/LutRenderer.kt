@@ -927,10 +927,18 @@ class LutRenderer : GLSurfaceView.Renderer {
         var hasFreshCameraFrame = false
         synchronized(frameSyncObject) {
             if (frameAvailable) {
-                surfaceTexture?.updateTexImage()
-                surfaceTexture?.getTransformMatrix(stMatrix)
+                try {
+                    surfaceTexture?.updateTexImage()
+                    surfaceTexture?.getTransformMatrix(stMatrix)
+                    hasFreshCameraFrame = true
+                } catch (e: RuntimeException) {
+                    PLog.e(
+                        TAG,
+                        "updateTexImage failed, surfaceReady=$surfaceReady, cameraTextureId=$cameraTextureId",
+                        e
+                    )
+                }
                 frameAvailable = false
-                hasFreshCameraFrame = true
             }
         }
 

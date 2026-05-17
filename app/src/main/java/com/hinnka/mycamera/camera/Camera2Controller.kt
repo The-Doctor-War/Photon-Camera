@@ -3227,9 +3227,12 @@ class Camera2Controller(private val context: Context) {
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
 
-                if (!isRawCapture && shouldMirrorStillCaptureToPreview()) {
-                    previewSurface?.let { addTarget(it) }
-                }
+                // Do not mirror still capture frames to the GL preview SurfaceTexture.
+                // Some camera HALs occasionally deliver a still-capture buffer that
+                // SurfaceTexture.updateTexImage cannot bind as an external OES image.
+                // if (!isRawCapture && shouldMirrorStillCaptureToPreview()) {
+                //     previewSurface?.let { addTarget(it) }
+                // }
 
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
                 // isCapture = true 确保使用完整的曝光时间（不限制长曝光）
