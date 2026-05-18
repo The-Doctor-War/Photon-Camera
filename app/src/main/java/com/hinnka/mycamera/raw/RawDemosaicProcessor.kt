@@ -1918,6 +1918,22 @@ class RawDemosaicProcessor {
         )
         checkGlError("renderCombinedPass base uniforms")
 
+        val hasLensShading = metadata.lensShadingMap != null &&
+            metadata.lensShadingMapWidth > 0 &&
+            metadata.lensShadingMapHeight > 0
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE4)
+        if (hasLensShading) {
+            uploadLensShadingTexture(metadata)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lensShadingTextureId)
+        } else {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, createDummyShadingTexture())
+        }
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(combinedProgram, "uLensShadingMap"), 4)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uLensShadingEnabled"),
+            if (hasLensShading) 1 else 0
+        )
+
         bindDcpCombinedResources(dcpRenderPlan)
 
         GLES30.glUniformMatrix3fv(

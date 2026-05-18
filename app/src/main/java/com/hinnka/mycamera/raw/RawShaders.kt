@@ -134,11 +134,13 @@ object RawShaders {
         
         uniform sampler2D uInputTexture;
         uniform sampler2D uCurveTexture;
+        uniform sampler2D uLensShadingMap;
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
+        uniform bool uLensShadingEnabled;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
         uniform ivec3 uDcpHueSatDivisions;
@@ -148,6 +150,15 @@ object RawShaders {
         
         float luminance(vec3 color) {
             return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+        }
+
+        vec3 applyLensShading(vec3 color) {
+            if (!uLensShadingEnabled) {
+                return color;
+            }
+            vec4 gain = texture(uLensShadingMap, vTexCoord);
+            vec3 rgbGain = vec3(gain.r, 0.5 * (gain.g + gain.b), gain.a);
+            return color * max(rgbGain, vec3(0.0));
         }
 
         float sampleCurve(float value) {
@@ -380,6 +391,7 @@ object RawShaders {
 
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
+            color = applyLensShading(color);
             color = reinhardLocalTonemapping(color);
 
             if (uDcpHueSatEnabled) {

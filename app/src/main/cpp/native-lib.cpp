@@ -557,6 +557,65 @@ static bool applySupportedDngGainMaps(LibRaw &rawProcessor, const float blackLev
   return true;
 }
 
+static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
+                                            int &outWidth, int &outHeight) {
+  outWidth = 0;
+  outHeight = 0;
+
+  std::vector<DngGainMap> gainMaps;
+  if (!parseDngGainMaps(rawProcessor.imgdata.color.dng_levels.rawopcodes[1], gainMaps) ||
+      gainMaps.size() != 4) {
+    return nullptr;
+  }
+
+  const uint32_t mapWidth = gainMaps[0].mapPointsH;
+  const uint32_t mapHeight = gainMaps[0].mapPointsV;
+  if (mapWidth == 0 || mapHeight == 0) {
+    return nullptr;
+  }
+
+  for (const auto &gainMap : gainMaps) {
+    if (gainMap.mapPointsH != mapWidth || gainMap.mapPointsV != mapHeight ||
+        gainMap.mapPlanes != 1 || gainMap.mapGain.empty()) {
+      LOGI("dng gain map export: incompatible map layout");
+      return nullptr;
+    }
+  }
+
+  std::vector<float> packed(static_cast<size_t>(mapWidth) * mapHeight * 4, 1.0f);
+  for (const auto &gainMap : gainMaps) {
+    int cfa = rawProcessor.FC(gainMap.top, gainMap.left);
+    int outChannel;
+    if (cfa == 0) {
+      outChannel = 0; // R
+    } else if (cfa == 1) {
+      outChannel = 1; // Gr
+    } else if (cfa == 2) {
+      outChannel = 3; // B in LibRaw CFA order, packed as A
+    } else {
+      outChannel = 2; // Gb
+    }
+
+    for (uint32_t y = 0; y < mapHeight; ++y) {
+      for (uint32_t x = 0; x < mapWidth; ++x) {
+        const size_t src = static_cast<size_t>(y) * mapWidth + x;
+        const size_t dst = src * 4 + static_cast<size_t>(outChannel);
+        packed[dst] = gainMap.mapGain[src];
+      }
+    }
+  }
+
+  outWidth = static_cast<int>(mapWidth);
+  outHeight = static_cast<int>(mapHeight);
+  jfloatArray result = env->NewFloatArray(static_cast<jsize>(packed.size()));
+  if (!result) {
+    return nullptr;
+  }
+  env->SetFloatArrayRegion(result, 0, static_cast<jsize>(packed.size()), packed.data());
+  LOGI("dng gain map export: %dx%d", outWidth, outHeight);
+  return result;
+}
+
 static bool estimateRawAutoWhiteBalance(LibRaw &rawProcessor, const float blackLevels[4],
                                         float outUserMul[4], int &sampleCount) {
   sampleCount = 0;
@@ -1952,9 +2011,12 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   float dngBlackLevels[4] = {};
   computeEffectiveBlackLevels(RawProcessor, dngBlackLevels);
   LOGI("dng black levels (metadata): %f %f %f %f", dngBlackLevels[0], dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]);
-  const bool appliedDngGainMap = applySupportedDngGainMaps(RawProcessor, dngBlackLevels);
-  LOGI("dng gain map: opcode2_len=%u applied=%d", RawProcessor.imgdata.color.dng_levels.rawopcodes[1].len,
-       appliedDngGainMap ? 1 : 0);
+  int exportedLscWidth = 0;
+  int exportedLscHeight = 0;
+  jfloatArray exportedLscArray = buildDngLensShadingArray(env, RawProcessor, exportedLscWidth, exportedLscHeight);
+  LOGI("dng gain map: opcode2_len=%u native_apply=0 exported=%d",
+       RawProcessor.imgdata.color.dng_levels.rawopcodes[1].len,
+       exportedLscArray ? 1 : 0);
 
   RawProcessor.imgdata.params.output_bps = 16;
   RawProcessor.imgdata.params.gamm[0] = 1.0; // Linear
@@ -2341,7 +2403,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jobject dngData = env->NewObject(
       dngDataClass, constructor, rawDataBuffer, width, height, rowStride,
       whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
-      cfaPattern, 0, baselineExposure, nullptr, 0, 0, exposureBias, iso,
+      cfaPattern, 0, baselineExposure, exportedLscArray, exportedLscWidth, exportedLscHeight, exposureBias, iso,
       shutterSpeedLong, aperture, activeArray, noiseProfileArray,
       embeddedPreviewBitmap);
 
