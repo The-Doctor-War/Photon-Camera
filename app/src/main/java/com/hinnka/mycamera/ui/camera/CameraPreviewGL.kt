@@ -3,6 +3,7 @@ package com.hinnka.mycamera.ui.camera
 import android.graphics.SurfaceTexture
 import android.util.Size
 import androidx.compose.foundation.background
+import com.hinnka.mycamera.utils.PLog
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -125,6 +126,7 @@ fun CameraPreviewGL(
         var surfaceTextureNotified by remember { mutableStateOf(false) }
         var notifiedPreviewSize by remember { mutableStateOf<Size?>(null) }
         var notifiedResumeGeneration by remember { mutableIntStateOf(-1) }
+        var notifiedSurfaceTexture by remember { mutableStateOf<SurfaceTexture?>(null) }
         // 标记 Surface 是否已经准备好
         var surfaceAvailable by remember { mutableStateOf(false) }
 
@@ -156,10 +158,17 @@ fun CameraPreviewGL(
                     update = { glSurfaceView ->
                         // 更新闭包捕获的状态
                         glSurfaceView.onSurfaceReady = { _ ->
+                            PLog.d("CameraPreviewGL", "onSurfaceReady called")
                             // SurfaceTexture 已经准备好，可以开始预览
                             surfaceAvailable = true
                             glSurfaceView.getSurfaceTexture()?.let { surfaceTexture ->
                                 glSurfaceView.setPreviewSize(previewSize.width, previewSize.height)
+                                PLog.d("CameraPreviewGL", "onSurfaceReady: notifiedST=$notifiedSurfaceTexture, newST=$surfaceTexture")
+                                // If the SurfaceTexture changed (e.g. Surface recreated due to layout bounds change), force notify
+                                if (notifiedSurfaceTexture != null && notifiedSurfaceTexture != surfaceTexture) {
+                                    PLog.d("CameraPreviewGL", "onSurfaceReady: Forcing surfaceTextureNotified = false")
+                                    surfaceTextureNotified = false
+                                }
                                 // 取消从这里回调，统一在 update 中处理
                             }
                         }
@@ -170,6 +179,7 @@ fun CameraPreviewGL(
                                 surfaceTextureNotified = false
                                 notifiedPreviewSize = null
                                 notifiedResumeGeneration = -1
+                                notifiedSurfaceTexture = null
                                 onSurfaceDestroyed()
                             }
                         }
@@ -191,17 +201,27 @@ fun CameraPreviewGL(
                         // 当 SurfaceTexture 准备好且尺寸已就绪时，通知外部打开相机。
                         // 对 previewSize 变化使用 key 重建 GLSurfaceView，避免旧 SurfaceTexture
                         // 的残留帧在新尺寸矩阵下继续显示几帧。
+                        
+                        // 强制在所有的条件分支之外读取这几个 State，让 Compose 确保能监听到变化！
+                        val currentSurfaceNotified = surfaceTextureNotified
+                        val currentNotifiedST = notifiedSurfaceTexture
+                        val currentNotifiedResumeGen = notifiedResumeGeneration
+                        val currentNotifiedPreviewSize = notifiedPreviewSize
+                        
                         if (viewWidth > 0 && viewHeight > 0 && surfaceAvailable) {
                             glSurfaceView.getSurfaceTexture()?.let { surfaceTexture ->
                                 glSurfaceView.setPreviewSize(previewSize.width, previewSize.height)
                                 val shouldNotifySurfaceTexture =
-                                    !surfaceTextureNotified ||
-                                        notifiedPreviewSize != previewSize ||
-                                        notifiedResumeGeneration != resumeGeneration
+                                    !currentSurfaceNotified ||
+                                        currentNotifiedPreviewSize != previewSize ||
+                                        currentNotifiedResumeGen != resumeGeneration ||
+                                        currentNotifiedST != surfaceTexture
                                 if (shouldNotifySurfaceTexture) {
+                                    PLog.d("CameraPreviewGL", "shouldNotifySurfaceTexture is true, calling onSurfaceTextureReady")
                                     surfaceTextureNotified = true
                                     notifiedPreviewSize = previewSize
                                     notifiedResumeGeneration = resumeGeneration
+                                    notifiedSurfaceTexture = surfaceTexture
                                     onSurfaceTextureReady(surfaceTexture)
                                 }
                             }
