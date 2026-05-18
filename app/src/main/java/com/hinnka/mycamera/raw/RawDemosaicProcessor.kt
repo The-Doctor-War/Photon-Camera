@@ -24,6 +24,7 @@ import java.nio.ShortBuffer
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.ln
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sqrt
 import android.opengl.Matrix as GlMatrix
@@ -1164,7 +1165,7 @@ class RawDemosaicProcessor {
 
         val noiseAdaptiveScale = computeDenoiseStrengthScale(s, o)
         val h = denoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale
-        val ch = chromaDenoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale + 0.2f
+        val ch = chromaDenoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale + 0.3f
         PLog.d(
             TAG,
             "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch scale=$noiseAdaptiveScale iso=${metadata.iso} linearGain=$linearExposureGain"
@@ -1948,6 +1949,10 @@ class RawDemosaicProcessor {
             GLES30.glGetUniformLocation(combinedProgram, "uLensShadingEnabled"),
             if (hasLensShading) 1 else 0
         )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(combinedProgram, "uLensShadingPower"),
+            computeLensShadingPower(metadata)
+        )
 
         bindDcpCombinedResources(dcpRenderPlan)
 
@@ -1970,6 +1975,39 @@ class RawDemosaicProcessor {
     private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
         val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
         return t * t * (3f - 2f * t)
+    }
+
+    private fun computeLensShadingPower(metadata: RawMetadata): Float {
+        val map = metadata.lensShadingMap ?: return 1f
+        val width = metadata.lensShadingMapWidth
+        val height = metadata.lensShadingMapHeight
+        if (width <= 0 || height <= 0 || map.size < width * height * 4) return 1f
+
+        fun lumaGainAt(index: Int): Float {
+            val base = index * 4
+            val r = map.getOrElse(base) { 1f }
+            val gr = map.getOrElse(base + 1) { 1f }
+            val gb = map.getOrElse(base + 2) { gr }
+            val b = map.getOrElse(base + 3) { 1f }
+            return (0.2126f * r + 0.7152f * ((gr + gb) * 0.5f) + 0.0722f * b)
+                .coerceAtLeast(1e-4f)
+        }
+
+        val centerIndex = (height / 2) * width + (width / 2)
+        val centerGain = lumaGainAt(centerIndex)
+        var maxRelativeGain = 1f
+        for (i in 0 until width * height) {
+            maxRelativeGain = max(maxRelativeGain, lumaGainAt(i) / centerGain)
+        }
+
+        // Limit the strongest post-denoise LSC lift to one stop:
+        // applied = relativeGain^power, so power = log(2) / log(maxRelativeGain).
+        val maxAllowedLift = 2f
+        return if (maxRelativeGain <= maxAllowedLift) {
+            1f
+        } else {
+            (ln(maxAllowedLift) / ln(maxRelativeGain)).coerceIn(0f, 1f)
+        }
     }
 
     private fun logProgramLinkResult(program: Int, name: String): Boolean {

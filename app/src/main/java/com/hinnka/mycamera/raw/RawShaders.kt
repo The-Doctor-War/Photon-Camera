@@ -141,6 +141,7 @@ object RawShaders {
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
         uniform bool uLensShadingEnabled;
+        uniform float uLensShadingPower;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
         uniform ivec3 uDcpHueSatDivisions;
@@ -157,8 +158,12 @@ object RawShaders {
                 return color;
             }
             vec4 gain = texture(uLensShadingMap, vTexCoord);
-            vec3 rgbGain = vec3(gain.r, 0.5 * (gain.g + gain.b), gain.a);
-            return color * max(rgbGain, vec3(0.0));
+            vec4 centerGain = texture(uLensShadingMap, vec2(0.5));
+            float lumaGain = dot(vec3(gain.r, 0.5 * (gain.g + gain.b), gain.a), vec3(0.2126, 0.7152, 0.0722));
+            float centerLumaGain = dot(vec3(centerGain.r, 0.5 * (centerGain.g + centerGain.b), centerGain.a), vec3(0.2126, 0.7152, 0.0722));
+            lumaGain /= max(centerLumaGain, 1e-4);
+            lumaGain = pow(max(lumaGain, 1e-4), clamp(uLensShadingPower, 0.0, 1.0));
+            return color * max(lumaGain, 0.0);
         }
 
         float sampleCurve(float value) {
