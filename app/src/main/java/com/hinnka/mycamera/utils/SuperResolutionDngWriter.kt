@@ -5,7 +5,6 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
-import android.util.Size
 import com.hinnka.mycamera.raw.RawMetadata
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
@@ -16,7 +15,6 @@ import java.nio.channels.Channels
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -139,9 +137,13 @@ object SuperResolutionDngWriter {
         whiteLevel: Int,
         imageByteCount: Long,
     ): List<TiffEntry> {
-        val referenceSize = chooseReferenceSensorSize(characteristics, width, height)
-        val defaultScaleX = referenceSize?.let { it.width.toDouble() / width.toDouble() } ?: 1.0
-        val defaultScaleY = referenceSize?.let { it.height.toDouble() / height.toDouble() } ?: 1.0
+        // The custom writer is used when the fused RAW dimensions no longer
+        // match the camera sensor. The fused buffer already lives in its final
+        // Bayer pixel grid, so DefaultScale must stay 1:1. Scaling it back to
+        // the physical sensor size makes RAW decoders downsample the >1x DNG
+        // before demosaic, which looks blurrier than the original 1x frame.
+        val defaultScaleX = 1.0
+        val defaultScaleY = 1.0
         val cameraModel = buildCameraModel(characteristics)
         val illuminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 21
         val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
@@ -269,21 +271,6 @@ object SuperResolutionDngWriter {
     private fun java.nio.channels.WritableByteChannel.writeFully(buffer: ByteBuffer) {
         while (buffer.hasRemaining()) {
             write(buffer)
-        }
-    }
-
-    private fun chooseReferenceSensorSize(
-        characteristics: CameraCharacteristics,
-        outputWidth: Int,
-        outputHeight: Int,
-    ): Size? {
-        val candidates = listOfNotNull(
-            characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
-                ?.let { Size(it.width(), it.height()) },
-            characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
-        )
-        return candidates.minByOrNull {
-            abs(outputWidth.toDouble() / it.width.toDouble() - outputHeight.toDouble() / it.height.toDouble())
         }
     }
 

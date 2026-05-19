@@ -263,7 +263,7 @@ void processGreenPlaneGather(ivec2 outPos, int planeIndex) {
             float geometricLikelihood =
                 exp(-0.5 * max(mahalanobis, 0.0) / effectiveSigma2);
             float inlierPosterior = clamp(pInlier * pc.frameWeight * highlightSuppression, 0.0, 1.0);
-            float w = inlierDecisionGate(inlierPosterior) *
+            float w = ((pc.isFirstFrame == 1u) ? 1.0 : inlierDecisionGate(inlierPosterior)) *
                       geometricLikelihood * reconWeight *
                       sensorPrecisionWeight(val);
             if (w <= 0.0) continue;
