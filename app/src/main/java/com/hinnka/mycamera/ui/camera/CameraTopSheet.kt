@@ -140,8 +140,9 @@ fun CameraTopSheet(
 
                     QuickSettingToggle(
                         title = stringResource(R.string.settings_use_super_resolution),
-                        checked = useMFSR,
+                        checked = useMFSR && !useRaw,
                         onCheckedChange = onMFSRToggle,
+                        enabled = !useRaw,
                         modifier = Modifier.weight(1f)
                     )
 
@@ -714,18 +715,20 @@ fun QuickSettingToggle(
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val contentAlpha = if (enabled) 1f else 0.38f
     Box(
         modifier = modifier
             .height(40.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (checked) Color(0xFFFF6B35).copy(alpha = 0.15f) else Color.White.copy(
+                if (checked) Color(0xFFFF6B35).copy(alpha = 0.15f * contentAlpha) else Color.White.copy(
                     alpha = 0.15f
                 )
             )
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -736,7 +739,11 @@ fun QuickSettingToggle(
         ) {
             Text(
                 text = title,
-                color = if (checked) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.9f),
+                color = if (checked) {
+                    Color(0xFFFF6B35).copy(alpha = contentAlpha)
+                } else {
+                    Color.White.copy(alpha = 0.9f * contentAlpha)
+                },
                 fontSize = 10.sp,
                 lineHeight = 10.sp,
                 fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal,
@@ -748,7 +755,13 @@ fun QuickSettingToggle(
                 modifier = Modifier
                     .size(8.dp)
                     .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(if (checked) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.2f))
+                    .background(
+                        if (checked) {
+                            Color(0xFFFF6B35).copy(alpha = contentAlpha)
+                        } else {
+                            Color.White.copy(alpha = 0.2f * contentAlpha)
+                        }
+                    )
             )
         }
     }

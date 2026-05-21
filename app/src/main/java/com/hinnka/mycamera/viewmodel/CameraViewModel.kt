@@ -2176,6 +2176,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 设置是否使用超分辨率
      */
     fun setUseMFSR(enabled: Boolean) {
+        if (enabled && useRaw.value) {
+            cameraController.setUseMFSR(false)
+            viewModelScope.launch {
+                userPreferencesRepository.saveUseMFSR(false)
+            }
+            return
+        }
         if (enabled) {
             setUseMultipleExposure(false)
             setUseMFNR(false)
@@ -2255,10 +2262,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setUseRaw(useRaw: Boolean) {
         if (useRaw) {
             setUseMultipleExposure(false)
+            cameraController.setUseMFSR(false)
         }
         cameraController.setUseRaw(useRaw)
         viewModelScope.launch {
             userPreferencesRepository.saveUseRaw(useRaw)
+            if (useRaw) {
+                userPreferencesRepository.saveUseMFSR(false)
+            }
         }
         reopenCamera()
     }
