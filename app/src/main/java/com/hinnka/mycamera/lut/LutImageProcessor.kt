@@ -1803,8 +1803,8 @@ class LutImageProcessor {
 
     companion object {
         private const val TAG = "LutImageProcessor"
-        private const val BITMAP_DENOISE_A = 0.015f
-        private const val BITMAP_DENOISE_B = 0.001f
+        private const val BITMAP_DENOISE_A = 0.008f
+        private const val BITMAP_DENOISE_B = 0.0005f
         private const val LCH_COLOR_BAND_COUNT = 9
 
         // 2D 图片版本的顶点着色器
