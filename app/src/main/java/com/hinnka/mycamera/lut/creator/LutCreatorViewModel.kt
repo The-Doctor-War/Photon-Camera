@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.lut.creator
 
 import android.app.Application
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -146,8 +147,9 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun loadBitmapFromUri(uri: Uri): android.graphics.Bitmap? {
+        val context = getApplication<Application>()
         return try {
-            val source = android.graphics.ImageDecoder.createSource(getApplication<Application>().contentResolver, uri)
+            val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
             val bitmap = android.graphics.ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
                 decoder.setAllocator(android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE) // Needs mutable maybe later, software allows fast reading
             }
@@ -158,8 +160,15 @@ class LutCreatorViewModel(application: Application) : AndroidViewModel(applicati
             }
             bitmap
         } catch (e: Exception) {
-            PLog.e("LutCreatorViewModel", "Failed to load bitmap from URI: $uri", e)
-            null
+            PLog.e("LutCreatorViewModel", "decode failed, fallback to BitmapFactory: $uri", e)
+            try {
+                context.contentResolver.openInputStream(uri).use {
+                    BitmapFactory.decodeStream(it)
+                }
+            } catch (e: Exception) {
+                PLog.e("LutCreatorViewModel", "decode failed again: $uri", e)
+                null
+            }
         }
     }
 
