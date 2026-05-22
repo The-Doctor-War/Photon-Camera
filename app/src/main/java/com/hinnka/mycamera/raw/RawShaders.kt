@@ -234,7 +234,7 @@ object RawShaders {
 
         vec3 dcpHsvToRgb(vec3 hsv) {
             float hue = mod(hsv.x, 6.0);
-            float sat = clamp(hsv.y, 0.0, 1.0);
+            float sat = max(hsv.y, 0.0);
             float value = max(hsv.z, 0.0);
             float chroma = value * sat;
             float x = chroma * (1.0 - abs(mod(hue, 2.0) - 1.0));
@@ -338,13 +338,13 @@ object RawShaders {
             hsv.x = mod(hsv.x + (modify.x * 6.0 / 360.0), 6.0);
             hsv.y = hsv.y * modify.y;
             if (encoding == 1) {
-                float encodedValue = clamp(tableHsv.z * modify.z, 0.0, 1.0);
+                float encodedValue = max(tableHsv.z * modify.z, 0.0);
                 hsv.z = srgbToLinear(vec3(encodedValue)).r;
             } else {
                 hsv.z = hsv.z * modify.z;
             }
-            hsv.y = clamp(hsv.y, 0.0, 1.0);
-            hsv.z = clamp(hsv.z, 0.0, 1.0);
+            hsv.y = max(hsv.y, 0.0);
+            hsv.z = max(hsv.z, 0.0);
 
             return dcpHsvToRgb(hsv);
         }
