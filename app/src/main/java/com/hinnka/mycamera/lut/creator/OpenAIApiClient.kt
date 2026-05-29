@@ -55,8 +55,8 @@ class OpenAIApiClient() {
         val BUILT_IN_API_URL = BuildConfig.BUILT_IN_API_URL
 //        const val OPENAI_API_URL = "https://api.openai.com/v1"
         val BUILT_IN_API_KEY = BuildConfig.BUILT_IN_API_KEY
-        const val BUILT_IN_IMAGE_MODEL = "mimo-v2.5"
-        const val BUILT_IN_MODEL = "mimo-v2.5"
+        const val BUILT_IN_IMAGE_MODEL = "gemini-3.5-flash"
+        const val BUILT_IN_MODEL = "gemini-3.5-flash"
     }
 
     private val client = OkHttpClient.Builder()

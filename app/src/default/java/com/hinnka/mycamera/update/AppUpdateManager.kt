@@ -38,7 +38,7 @@ data class AppUpdateRelease(
 
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
-    private const val VERSION_CHECK_URL = "https://camera-api.hinnka.com/api/version/check"
+    private const val VERSION_CHECK_URL = "https://camera-api.hinnka.me/api/version/check"
     private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
     private const val APK_MAGIC_0 = 'P'.code.toByte()
     private const val APK_MAGIC_1 = 'K'.code.toByte()

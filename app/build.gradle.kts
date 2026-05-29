@@ -40,6 +40,17 @@ android {
                 arguments += "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
             }
         }
+
+        buildConfigField(
+            "String",
+            "BUILT_IN_API_URL",
+            "https://camera-api.hinnka.me/v1".toBuildConfigString()
+        )
+        buildConfigField(
+            "String",
+            "BUILT_IN_API_KEY",
+            localProperties.getProperty("BUILT_IN_API_KEY_GOOGLE", "").toBuildConfigString()
+        )
     }
 
     signingConfigs {
@@ -76,57 +87,17 @@ android {
     productFlavors {
         create("google") {
             dimension = "channel"
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_URL",
-                "https://camera-api.hinnka.com/v1".toBuildConfigString()
-            )
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_KEY",
-                localProperties.getProperty("BUILT_IN_API_KEY_GOOGLE", "").toBuildConfigString()
-            )
         }
         create("default") {
             dimension = "channel"
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_URL",
-                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
-            )
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_KEY",
-                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
-            )
         }
         create("samsung") {
             dimension = "channel"
             applicationId = "com.samsung.android.scan3d"
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_URL",
-                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
-            )
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_KEY",
-                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
-            )
         }
         create("meitu") {
             dimension = "channel"
             applicationId = "com.meitu.meiyancamera"
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_URL",
-                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
-            )
-            buildConfigField(
-                "String",
-                "BUILT_IN_API_KEY",
-                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
-            )
         }
     }
 
