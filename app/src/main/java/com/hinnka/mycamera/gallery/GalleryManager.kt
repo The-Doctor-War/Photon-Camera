@@ -2631,9 +2631,43 @@ object GalleryManager {
                     sourceUri = uri.toString()
                 )
 
-                // 1. 检测是否为 RAW 文件
+                // 1. 检测是否为 RAW 或视频文件
                 val mimeType = context.contentResolver.getType(uri)
                 val fileName = getFileName(context, uri) ?: ""
+                val isVideo = mimeType?.startsWith("video/") == true
+
+                if (isVideo) {
+                    val info = readVideoRecordInfo(context, uri) ?: return@withContext null
+                    val videoMetadata = MediaMetadata(
+                        mediaType = MediaType.VIDEO,
+                        dateTaken = info.dateTaken,
+                        width = info.width,
+                        height = info.height,
+                        sourceUri = uri.toString(),
+                        mimeType = info.mimeType,
+                        durationMs = info.durationMs,
+                        frameRate = info.frameRate,
+                        bitrate = info.bitrate,
+                        rotationDegrees = info.rotationDegrees,
+                        hasAudio = info.hasAudio,
+                        videoWidth = info.width,
+                        videoHeight = info.height,
+                        captureMode = "video",
+                        isImported = true
+                    )
+                    val thumbnailSaved = saveVideoThumbnail(context, uri, thumbnailFile)
+                    if (!thumbnailSaved) {
+                        PLog.w(TAG, "Video thumbnail not generated for imported video $uri")
+                    }
+                    val metadataSaved = saveMetadata(context, photoId, videoMetadata)
+                    if (!metadataSaved) {
+                        photoDir.deleteRecursively()
+                        return@withContext null
+                    }
+                    notifyPhotoLibraryChanged()
+                    return@withContext photoId
+                }
+
                 val userPrefs =
                     ContentRepository.getInstance(context).userPreferencesRepository.userPreferences.firstOrNull()
                 val isRaw = mimeType?.contains("raw", ignoreCase = true) == true ||

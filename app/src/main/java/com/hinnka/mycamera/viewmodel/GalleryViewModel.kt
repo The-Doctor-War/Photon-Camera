@@ -28,6 +28,7 @@ import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.PhotoTransformation
+import com.hinnka.mycamera.lut.exportVideoWithEffects
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.raw.DcpInfo
@@ -173,10 +174,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val _isSharing = MutableStateFlow(false)
     val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
 
-    // 导出状态
+    // 导出状态（照片批量导出）
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
     var exportProgress by mutableStateOf(0 to 0)
+        private set
+
+    // 视频导出状态
+    var isVideoExporting by mutableStateOf(false)
+        private set
+    var videoExportProgress by mutableStateOf(0)
         private set
 
     // 多选模式
@@ -1556,7 +1563,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun enterEditMode() {
         val targetPhoto = getCurrentPhoto() ?: return
-        if (targetPhoto.isVideo) return
 
         if (currentMediaMetadata == null || currentPhotoMetadataId != targetPhoto.id) {
             val context = getApplication<Application>()
@@ -1581,46 +1587,52 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         currentMediaMetadata?.let { metadata ->
             editLutId.value = metadata.lutId
             editFrameId.value = metadata.frameId
-            editRawDcpId.value = metadata.rawDcpId
-            editRawBaselineLutId.value = metadata.baselineLutId
-            restoreCropEditState(targetPhoto, metadata)
             editPhotoRecipeParams.value = metadata.colorRecipeParams
-            // 智能初始化：导入的照片默认值为 0，App 拍摄的则回退到当前全局配置
-            editSharpening.value =
-                metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening.value)
-            editNoiseReduction.value =
-                metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction.value)
-            editChromaNoiseReduction.value =
-                metadata.chromaNoiseReduction
-                    ?: (if (metadata.isImported) 0f else chromaNoiseReduction.value)
-            editRawDenoise.value = metadata.rawDenoiseValue ?: 0f
-            editRawExposureCompensation.value = metadata.rawExposureCompensation ?: 0f
-            editRawAutoExposure.value = metadata.rawAutoExposure ?: true
-            editRawBlackPointCorrection.value = metadata.rawBlackPointCorrection ?: 0f
-            editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
-            editRawDROMode.value = RawProcessingPreferences.DROMode.fromPersistedName(metadata.droMode).name
-            editComputationalAperture.value = metadata.computationalAperture
-            editFocusPointX.value = metadata.focusPointX
-            editFocusPointY.value = metadata.focusPointY
+            
+            if (!targetPhoto.isVideo) {
+                editRawDcpId.value = metadata.rawDcpId
+                editRawBaselineLutId.value = metadata.baselineLutId
+                restoreCropEditState(targetPhoto, metadata)
+                // 智能初始化：导入的照片默认值为 0，App 拍摄的则回退到当前全局配置
+                editSharpening.value =
+                    metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening.value)
+                editNoiseReduction.value =
+                    metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction.value)
+                editChromaNoiseReduction.value =
+                    metadata.chromaNoiseReduction
+                        ?: (if (metadata.isImported) 0f else chromaNoiseReduction.value)
+                editRawDenoise.value = metadata.rawDenoiseValue ?: 0f
+                editRawExposureCompensation.value = metadata.rawExposureCompensation ?: 0f
+                editRawAutoExposure.value = metadata.rawAutoExposure ?: true
+                editRawBlackPointCorrection.value = metadata.rawBlackPointCorrection ?: 0f
+                editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
+                editRawDROMode.value = RawProcessingPreferences.DROMode.fromPersistedName(metadata.droMode).name
+                editComputationalAperture.value = metadata.computationalAperture
+                editFocusPointX.value = metadata.focusPointX
+                editFocusPointY.value = metadata.focusPointY
+            }
         } ?: run {
             editLutId.value = null
             editFrameId.value = null
-            // 这里一般是本 App 预览或拍摄进入，保持跟随全局
-            editSharpening.value = sharpening.value
-            editNoiseReduction.value = noiseReduction.value
-            editChromaNoiseReduction.value = chromaNoiseReduction.value
-            editRawDenoise.value = 0.2f
-            editRawExposureCompensation.value = 0f
-            editRawAutoExposure.value = true
-            editRawBlackPointCorrection.value = 0f
-            editRawWhitePointCorrection.value = 0f
-            editRawDROMode.value = "OFF"
-            editRawDcpId.value = null
-            editRawBaselineLutId.value = null
-            editComputationalAperture.value = null
-            editFocusPointX.value = null
-            editFocusPointY.value = null
-            restoreCropEditState(targetPhoto, null)
+            
+            if (!targetPhoto.isVideo) {
+                // 这里一般是本 App 预览或拍摄进入，保持跟随全局
+                editSharpening.value = sharpening.value
+                editNoiseReduction.value = noiseReduction.value
+                editChromaNoiseReduction.value = chromaNoiseReduction.value
+                editRawDenoise.value = 0.2f
+                editRawExposureCompensation.value = 0f
+                editRawAutoExposure.value = true
+                editRawBlackPointCorrection.value = 0f
+                editRawWhitePointCorrection.value = 0f
+                editRawDROMode.value = "OFF"
+                editRawDcpId.value = null
+                editRawBaselineLutId.value = null
+                editComputationalAperture.value = null
+                editFocusPointX.value = null
+                editFocusPointY.value = null
+                restoreCropEditState(targetPhoto, null)
+            }
         }
 
         // 加载当前编辑的 LUT 配置
@@ -2500,6 +2512,80 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 loadPhotos()
             }
             onComplete(success)
+        }
+    }
+
+    /**
+     * 导出视频：使用 Media3 Transformer 将 LUT / 色彩配方效果烘焙到视频文件并保存到系统相册。
+     * 导出不修改原始视频，结果保存在 Movies/PhotonCamera/ 目录。
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun exportVideo(
+        photo: MediaData,
+        onComplete: (success: Boolean, exportedUri: android.net.Uri?) -> Unit = { _, _ -> }
+    ) {
+        if (!photo.isVideo) {
+            onComplete(false, null)
+            return
+        }
+        if (isVideoExporting) return
+
+        viewModelScope.launch {
+            isVideoExporting = true
+            videoExportProgress = 0
+            try {
+                val context = getApplication<android.app.Application>()
+
+                // 获取最新元数据（包含 lutId 和 colorRecipeParams）
+                val metadata = GalleryManager.loadMetadata(context, photo.id) ?: photo.metadata
+
+                // 加载 LUT 配置
+                val lutId = metadata?.lutId
+                val lutConfig = lutId?.let {
+                    contentRepository.lutManager.loadLut(it)
+                }
+
+                // 获取色彩配方
+                val recipeParams = metadata?.colorRecipeParams
+
+                // 视频输入 URI：优先使用 sourceUri（PhotonCamera 录制的视频），否则使用 uri
+                val inputUri = photo.sourceUri ?: photo.uri
+
+                // 生成输出文件名（基于原始文件名加 _edit 后缀）
+                val baseName = photo.displayName
+                    .substringBeforeLast(".")
+                    .ifBlank { "PhotonCamera_video" }
+                val lutSuffix = lutId?.let {
+                    contentRepository.lutManager.getLutInfo(it)?.getName() ?: ""
+                }?.let { if (it.isNotEmpty()) ".$it" else "" } ?: ""
+                val outputName = "${baseName}${lutSuffix}_edit"
+
+                val resultUri = exportVideoWithEffects(
+                    context = context,
+                    inputUri = inputUri,
+                    lutConfig = lutConfig,
+                    recipeParams = recipeParams,
+                    outputDisplayName = outputName,
+                    onProgress = { progress ->
+                        videoExportProgress = progress
+                    }
+                )
+
+                // 记录导出 URI 到元数据
+                if (resultUri != null) {
+                    GalleryManager.updateMetadata(context, photo.id) { current ->
+                        current.copy(exportedUris = current.exportedUris + resultUri.toString())
+                    }
+                }
+
+                onComplete(resultUri != null, resultUri)
+            } catch (e: Exception) {
+                PLog.e(TAG, "exportVideo failed", e)
+                onComplete(false, null)
+            } finally {
+                isVideoExporting = false
+                videoExportProgress = 0
+            }
         }
     }
 

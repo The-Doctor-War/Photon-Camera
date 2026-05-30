@@ -164,10 +164,9 @@ object GalleryMediaStore {
         val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
         val isVideo = metadata.mediaType == MediaType.VIDEO
         val dateAdded = if (isVideo) {
-            metadata.dateTaken ?: photoDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+            photoDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
         } else {
             originalFile.lastModified().takeIf { originalFile.exists() && it > 0L }
-                ?: metadata.dateTaken
                 ?: photoDir.lastModified().takeIf { it > 0L }
                 ?: System.currentTimeMillis()
         }
@@ -285,7 +284,7 @@ object GalleryMediaStore {
                 uri = resolvedSourceUri,
                 thumbnailUri = thumbnailUri,
                 displayName = resolvedSourceUri.lastPathSegment ?: "video_$id",
-                dateAdded = dateTaken ?: dateAdded,
+                dateAdded = dateAdded,
                 size = size,
                 width = videoWidth ?: width,
                 height = videoHeight ?: height,

@@ -30,9 +30,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,7 +55,6 @@ import com.hinnka.mycamera.R
 import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
 import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
-import com.hinnka.mycamera.frame.TextType
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
@@ -76,9 +75,19 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import me.saket.telephoto.zoomable.ZoomSpec
-import java.text.SimpleDateFormat
-import java.util.*
+
+import androidx.compose.ui.viewinterop.AndroidView
+import android.view.LayoutInflater
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
+import com.hinnka.mycamera.lut.VideoLutEffect
+import com.hinnka.mycamera.lut.LutConfig
+import com.hinnka.mycamera.ui.camera.autoRotate
 
 private data class PreviewRenderSignature(
     val photoId: String,
@@ -115,7 +124,7 @@ private data class PreviewRenderSignature(
 @SuppressLint("LocalContextGetResourceValueCall")
 @OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
-fun PhotoEditScreen(
+fun GalleryEditScreen(
     viewModel: GalleryViewModel,
     cameraViewModel: CameraViewModel,
     onBack: () -> Unit,
@@ -303,6 +312,7 @@ fun PhotoEditScreen(
 
     LaunchedEffect(currentPhoto, refreshKey) {
         val photo = currentPhoto ?: return@LaunchedEffect
+        if (photo.isVideo) return@LaunchedEffect
         snapshotFlow {
             currentPreviewSignature()
         }
@@ -315,6 +325,7 @@ fun PhotoEditScreen(
 
     LaunchedEffect(currentPhoto, refreshKey) {
         val photo = currentPhoto ?: return@LaunchedEffect
+        if (photo.isVideo) return@LaunchedEffect
         snapshotFlow {
             currentPreviewSignature()
         }
@@ -648,15 +659,24 @@ fun PhotoEditScreen(
                 contentAlignment = Alignment.Center
             ) {
                 // 显示预览
-                ZoomableEditImage(
-                    previewBitmap = previewBitmap,
-                    isLutEditing = isLutEditSheetVisible || isBaselineLutEditSheetVisible,
-                    contentDescription = stringResource(R.string.edit),
-                    onZoomChange = {
-                        isZoomed = it
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                if (currentPhoto.isVideo) {
+                    VideoEditPlayer(
+                        photo = currentPhoto,
+                        lutConfig = editLutConfig,
+                        recipeParams = if (showOrigin) null else (previewRecipeParamsOverride ?: editPhotoRecipeParams ?: editLutRecipeParams),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    ZoomableEditImage(
+                        previewBitmap = previewBitmap,
+                        isLutEditing = isLutEditSheetVisible || isBaselineLutEditSheetVisible,
+                        contentDescription = stringResource(R.string.edit),
+                        onZoomChange = {
+                            isZoomed = it
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
 
                 // 只有在裁剪标签页才显示叠加层并且只能操作裁剪层
                 if (editTab == 3 && previewBitmap != null) {
@@ -807,11 +827,13 @@ fun PhotoEditScreen(
                                     onClick = { editTab = 2 }
                                 )
                             }
-                            TabItem(
-                                title = stringResource(R.string.crop),
-                                isSelected = editTab == 3,
-                                onClick = { editTab = 3 }
-                            )
+                            if (!currentPhoto.isVideo) {
+                                TabItem(
+                                    title = stringResource(R.string.crop),
+                                    isSelected = editTab == 3,
+                                    onClick = { editTab = 3 }
+                                )
+                            }
                         }
                         Column(modifier = Modifier.heightIn(max = 550.dp).verticalScroll(rememberScrollState())) {
                             when (editTab) {
@@ -883,149 +905,153 @@ fun PhotoEditScreen(
                                         categoryOrder = categoryOrder
                                     )
 
-                                    Spacer(modifier = Modifier.height(16.dp))
+                                    if (!currentPhoto.isVideo) {
+                                        Spacer(modifier = Modifier.height(16.dp))
 
-                                    // 边框水印选择器
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = stringResource(R.string.frame),
-                                            color = Color.White,
-                                            fontSize = 16.sp
-                                        )
+                                        // 边框水印选择器
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = stringResource(R.string.frame),
+                                                color = Color.White,
+                                                fontSize = 16.sp
+                                            )
 
-                                        if (editFrameId != null) {
-                                            val currentFrame = availableFrames.find { it.id == editFrameId }
-                                            if (currentFrame?.isEditable == true) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(16.dp))
-                                                        .background(Color.White.copy(alpha = 0.1f))
-                                                        .clickable { onOpenFrameEditor(currentFrame.id) }
-                                                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Tune,
-                                                        contentDescription = null,
-                                                        tint = Color(0xFFFFD700),
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                    Text(
-                                                        text = stringResource(R.string.edit),
-                                                        color = Color.White,
-                                                        fontSize = 11.sp
-                                                    )
+                                            if (editFrameId != null) {
+                                                val currentFrame = availableFrames.find { it.id == editFrameId }
+                                                if (currentFrame?.isEditable == true) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(16.dp))
+                                                            .background(Color.White.copy(alpha = 0.1f))
+                                                            .clickable { onOpenFrameEditor(currentFrame.id) }
+                                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Tune,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFFFFD700),
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Text(
+                                                            text = stringResource(R.string.edit),
+                                                            color = Color.White,
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
 
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
 
 
-                                    LazyRow(
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                        state = frameScrollState
-                                    ) {
-                                        // 无边框选项
-                                        item {
-                                            FrameOption(
-                                                name = stringResource(R.string.none),
-                                                isSelected = editFrameId == null,
-                                                isCustom = false,  // 无边框不是自定义
-                                                onClick = { viewModel.setEditFrame(null) }
-                                            )
-                                        }
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            state = frameScrollState
+                                        ) {
+                                            // 无边框选项
+                                            item {
+                                                FrameOption(
+                                                    name = stringResource(R.string.none),
+                                                    isSelected = editFrameId == null,
+                                                    isCustom = false,  // 无边框不是自定义
+                                                    onClick = { viewModel.setEditFrame(null) }
+                                                )
+                                            }
 
-                                        // 边框选项
-                                        items(availableFrames) { frame ->
-                                            FrameOption(
-                                                name = frame.name,
-                                                isSelected = editFrameId == frame.id,
-                                                isCustom = !frame.isBuiltIn,  // 添加自定义标识
-                                                isEditable = frame.isEditable,
-                                                onClick = {
-                                                    if (editFrameId == frame.id) {
-                                                        if (frame.isEditable) {
-                                                            onOpenFrameEditor(frame.id)
+                                            // 边框选项
+                                            items(availableFrames) { frame ->
+                                                FrameOption(
+                                                    name = frame.name,
+                                                    isSelected = editFrameId == frame.id,
+                                                    isCustom = !frame.isBuiltIn,  // 添加自定义标识
+                                                    isEditable = frame.isEditable,
+                                                    onClick = {
+                                                        if (editFrameId == frame.id) {
+                                                            if (frame.isEditable) {
+                                                                onOpenFrameEditor(frame.id)
+                                                            }
+                                                        } else {
+                                                            viewModel.setEditFrame(frame.id)
                                                         }
-                                                    } else {
-                                                        viewModel.setEditFrame(frame.id)
                                                     }
-                                                }
-                                            )
+                                                )
+                                            }
                                         }
                                     }
                                 }
                                 1 -> {
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    val isDnCNNDenoising by viewModel.isAiDenoising.collectAsState()
-                                    val dnCNNProgress by viewModel.aiDenoiseProgress.collectAsState()
+                                    if (!currentPhoto.isVideo) {
+                                        val isDnCNNDenoising by viewModel.isAiDenoising.collectAsState()
+                                        val dnCNNProgress by viewModel.aiDenoiseProgress.collectAsState()
 
-                                    SliderSettingItem(
-                                        title = stringResource(R.string.ai_denoise_title),
-                                        description = if (isDnCNNDenoising) stringResource(
-                                            R.string.ai_denoise_processing,
-                                            dnCNNProgress * 100
-                                        ) else stringResource(R.string.ai_denoise_description),
-                                        value = editAiDenoiseStrength,
-                                        valueRange = 0f..1f,
-                                        onValueChange = { viewModel.setAiDenoiseStrength(it) },
-                                        onValueChangeFinished = {
-                                            if (isDnCNNDenoising) return@SliderSettingItem
-                                            if (editAiDenoiseStrength > 0.01f) {
-                                                viewModel.applyDnCNNDenoise(
-                                                    photo = currentPhoto,
-                                                    strength = editAiDenoiseStrength,
-                                                    onComplete = { success ->
-                                                        if (!success) {
-                                                            Toast.makeText(
-                                                                context,
-                                                                context.getString(R.string.ai_denoise_failed),
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
+                                        SliderSettingItem(
+                                            title = stringResource(R.string.ai_denoise_title),
+                                            description = if (isDnCNNDenoising) stringResource(
+                                                R.string.ai_denoise_processing,
+                                                dnCNNProgress * 100
+                                            ) else stringResource(R.string.ai_denoise_description),
+                                            value = editAiDenoiseStrength,
+                                            valueRange = 0f..1f,
+                                            onValueChange = { viewModel.setAiDenoiseStrength(it) },
+                                            onValueChangeFinished = {
+                                                if (isDnCNNDenoising) return@SliderSettingItem
+                                                if (editAiDenoiseStrength > 0.01f) {
+                                                    viewModel.applyDnCNNDenoise(
+                                                        photo = currentPhoto,
+                                                        strength = editAiDenoiseStrength,
+                                                        onComplete = { success ->
+                                                            if (!success) {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    context.getString(R.string.ai_denoise_failed),
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
+                                                            }
                                                         }
-                                                    }
-                                                )
-                                            } else {
-                                                viewModel.resetDnCNNDenoise(
-                                                    photo = currentPhoto,
-                                                    onComplete = { success ->
-                                                        if (!success) {
-                                                            Toast.makeText(
-                                                                context,
-                                                                context.getString(R.string.ai_denoise_failed),
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
+                                                    )
+                                                } else {
+                                                    viewModel.resetDnCNNDenoise(
+                                                        photo = currentPhoto,
+                                                        onComplete = { success ->
+                                                            if (!success) {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    context.getString(R.string.ai_denoise_failed),
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
+                                                            }
                                                         }
-                                                    }
-                                                )
+                                                    )
+                                                }
                                             }
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    // 细节处理调整 (锐化, 降噪, 杂色降噪)
-                                    val aperture = editComputationalAperture
-                                    SliderSettingItem(
-                                        title = stringResource(R.string.virtual_aperture),
-                                        value = editComputationalAperture ?: 2.8f,
-                                        valueRange = 1.0f..16.0f,
-                                        onValueChange = { viewModel.setComputationalAperture(it) },
-                                        onValueChangeFinished = { },
-                                        toggleValue = aperture != null && aperture > 0f,
-                                        onToggleChange = { checked ->
-                                            if (checked) {
-                                                viewModel.setComputationalAperture(2.8f)
-                                            } else {
-                                                viewModel.setComputationalAperture(null)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        // 细节处理调整 (锐化, 降噪, 杂色降噪)
+                                        val aperture = editComputationalAperture
+                                        SliderSettingItem(
+                                            title = stringResource(R.string.virtual_aperture),
+                                            value = editComputationalAperture ?: 2.8f,
+                                            valueRange = 1.0f..16.0f,
+                                            onValueChange = { viewModel.setComputationalAperture(it) },
+                                            onValueChangeFinished = { },
+                                            toggleValue = aperture != null && aperture > 0f,
+                                            onToggleChange = { checked ->
+                                                if (checked) {
+                                                    viewModel.setComputationalAperture(2.8f)
+                                                } else {
+                                                    viewModel.setComputationalAperture(null)
+                                                }
                                             }
-                                        }
-                                    )
+                                        )
+                                    }
                                     SliderSettingItem(
                                         title = stringResource(R.string.settings_sharpening),
                                         value = editSharpening,
@@ -1127,15 +1153,17 @@ fun PhotoEditScreen(
                                     )
                                 }
                                 3 -> {
-                                    // 裁剪编辑
-                                    val availablePhotoAspectRatios by cameraViewModel.availablePhotoAspectRatios.collectAsState()
-                                    CropEditPanel(
-                                        selectedOption = editCropAspectOption,
-                                        onOptionSelected = { viewModel.setCropAspectOption(it) },
-                                        availableRatios = availablePhotoAspectRatios,
-                                        imageWidth = previewBitmap?.width ?: 1,
-                                        imageHeight = previewBitmap?.height ?: 1
-                                    )
+                                    if (!currentPhoto.isVideo) {
+                                        // 裁剪编辑
+                                        val availablePhotoAspectRatios by cameraViewModel.availablePhotoAspectRatios.collectAsState()
+                                        CropEditPanel(
+                                            selectedOption = editCropAspectOption,
+                                            onOptionSelected = { viewModel.setCropAspectOption(it) },
+                                            availableRatios = availablePhotoAspectRatios,
+                                            imageWidth = previewBitmap?.width ?: 1,
+                                            imageHeight = previewBitmap?.height ?: 1
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1467,5 +1495,86 @@ private fun <T> SegmentedControl(
                 }
             }
         }
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun VideoEditPlayer(
+    photo: MediaData,
+    lutConfig: LutConfig?,
+    recipeParams: ColorRecipeParams?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val mediaUri = remember(photo.id, photo.uri, photo.sourceUri) {
+        photo.sourceUri ?: photo.uri
+    }
+    
+    PLog.d("VideoEditPlayer", "VideoEditPlayer composable recomposing/initializing. photoId: ${photo.id}, mediaUri: $mediaUri")
+
+    var isPlayerActive by remember { mutableStateOf(false) }
+    LaunchedEffect(photo.id) {
+        delay(150) // Wait for the transitions to complete and EGL context release
+        isPlayerActive = true
+    }
+
+    val videoLutEffect = remember {
+        PLog.d("VideoEditPlayer", "Instantiating new VideoLutEffect.")
+        VideoLutEffect(lutConfig, recipeParams)
+    }
+    
+    LaunchedEffect(lutConfig, recipeParams) {
+        PLog.d("VideoEditPlayer", "Updating VideoLutEffect with lutConfig: ${lutConfig?.title}, recipeParams: ${recipeParams != null}")
+        videoLutEffect.update(lutConfig, recipeParams)
+    }
+
+    val exoPlayer = remember(photo.id, mediaUri, isPlayerActive) {
+        if (!isPlayerActive) return@remember null
+        PLog.d("VideoEditPlayer", "Re-creating loopable ExoPlayer instance for video preview.")
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(mediaUri))
+            repeatMode = Player.REPEAT_MODE_ONE
+            setVideoEffects(listOf(videoLutEffect))
+            prepare()
+            playWhenReady = true
+            
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    PLog.d("VideoEditPlayer", "ExoPlayer state changed: $state")
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    PLog.e("VideoEditPlayer", "ExoPlayer encountered playback error!", error)
+                }
+            })
+        }
+    }
+
+    DisposableEffect(exoPlayer) {
+        onDispose {
+            if (exoPlayer != null) {
+                PLog.d("VideoEditPlayer", "Disposing loopable ExoPlayer.")
+                exoPlayer.release()
+            }
+        }
+    }
+
+    if (exoPlayer != null) {
+        AndroidView(
+            factory = {
+                PLog.d("VideoEditPlayer", "Creating PlayerView factory.")
+                LayoutInflater.from(context).inflate(R.layout.view_motion_photo_player, null) as PlayerView
+            },
+            update = {
+                PLog.d("VideoEditPlayer", "Updating PlayerView with ExoPlayer.")
+                it.player = exoPlayer
+                it.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                it.useController = false
+                it.visibility = android.view.View.VISIBLE
+            },
+            modifier = modifier.autoRotate(matchParentSize = true)
+        )
+    } else {
+        Spacer(modifier = modifier.fillMaxSize())
     }
 }

@@ -78,7 +78,7 @@ import com.hinnka.mycamera.ui.camera.PuzzleScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryScreen
-import com.hinnka.mycamera.ui.gallery.PhotoEditScreen
+import com.hinnka.mycamera.ui.gallery.GalleryEditScreen
 import com.hinnka.mycamera.ui.settings.FilterManagementScreen
 import com.hinnka.mycamera.ui.settings.FrameEditorScreen
 import com.hinnka.mycamera.ui.settings.FrameManagementScreen
@@ -634,7 +634,7 @@ fun NavigationHost(
             }
 
             composable(Routes.PHOTO_EDIT) {
-                PhotoEditScreen(
+                GalleryEditScreen(
                     viewModel = galleryViewModel,
                     cameraViewModel = cameraViewModel,
                     onBack = {

@@ -222,9 +222,11 @@ dependencies {
     // Reorderable for drag-and-drop list reordering
     implementation("sh.calvin.reorderable:reorderable:2.4.3")
 
-    // Media3 for video playback
+    // Media3 for video playback and export
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.media3.effect)
+    implementation(libs.media3.transformer)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

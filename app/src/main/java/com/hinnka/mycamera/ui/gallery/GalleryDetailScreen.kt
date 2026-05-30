@@ -62,12 +62,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import androidx.media3.ui.AspectRatioFrameLayout
 import coil.request.ImageRequest
+import coil.compose.AsyncImage
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.lut.creator.AiPhotoEvaluation
+import com.hinnka.mycamera.lut.VideoLutEffect
 import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.ui.components.CustomSliderThinThumb
 import com.hinnka.mycamera.ui.components.PaymentDialog
 import com.hinnka.mycamera.utils.DeviceUtil
+import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.viewmodel.GalleryTab
 import kotlinx.coroutines.Dispatchers
 import me.saket.telephoto.zoomable.ZoomSpec
@@ -104,6 +107,9 @@ fun GalleryDetailScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var isExportingDng by remember { mutableStateOf(false) }
+    val isVideoExporting = viewModel.isVideoExporting
+    val videoExportProgress = viewModel.videoExportProgress
+    var showVideoExportConfirmDialog by remember { mutableStateOf(false) }
     val isSharing by viewModel.isSharing.collectAsState()
     val isPurchased by viewModel.isPurchased.collectAsState()
     var showAiScoreSheet by remember { mutableStateOf(false) }
@@ -396,7 +402,7 @@ fun GalleryDetailScreen(
                     }
 
                     // 编辑
-                    if (currentPhoto?.isImage == true) {
+                    if (currentPhoto?.isImage == true || currentPhoto?.isVideo == true) {
                         GalleryActionItem(
                             icon = Icons.Default.Edit,
                             text = stringResource(R.string.edit),
@@ -515,7 +521,8 @@ fun GalleryDetailScreen(
                                 if (photo.isVideo) {
                                     VideoDetailPlayer(
                                         photo = photo,
-                                        isActive = page == pagerState.currentPage,
+                                        isActive = page == pagerState.currentPage && !viewModel.isEditing,
+                                        viewModel = viewModel,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
@@ -663,6 +670,7 @@ fun GalleryDetailScreen(
                         currentPhoto?.let {
                             isSaving = true
                             viewModel.exportPhoto(it) { success ->
+                                showMoreSheet = false
                                 isSaving = false
                                 if (success) {
                                     Toast.makeText(context, R.string.export_success, Toast.LENGTH_SHORT).show()
@@ -684,6 +692,34 @@ fun GalleryDetailScreen(
             containerColor = Color(0xFF2D2D2D),
             titleContentColor = Color.White,
             textContentColor = Color.White
+        )
+    }
+
+    // 视频导出确认对话框
+    if (showVideoExportConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showVideoExportConfirmDialog = false },
+            title = { Text(stringResource(R.string.export_video)) },
+            text = { Text(stringResource(R.string.export_video_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showVideoExportConfirmDialog = false
+                    currentPhoto?.let { photo ->
+                        viewModel.exportVideo(photo) { success, _ ->
+                            showMoreSheet = false
+                            val msgRes = if (success) R.string.export_video_success else R.string.export_video_failed
+                            Toast.makeText(context, msgRes, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) {
+                    Text(stringResource(R.string.export_video))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showVideoExportConfirmDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
         )
     }
 
@@ -803,8 +839,19 @@ fun GalleryDetailScreen(
                             text = stringResource(R.string.export),
                             isLoading = isSaving,
                             onClick = {
-                                showMoreSheet = false
                                 showExportDialog = true
+                            }
+                        )
+                    }
+
+                    // 视频导出按钮（仅视频）
+                    if (currentPhoto.isVideo) {
+                        GalleryActionItem(
+                            icon = Icons.Default.Output,
+                            text = if (isVideoExporting && videoExportProgress > 0) "$videoExportProgress%" else stringResource(R.string.export),
+                            isLoading = isVideoExporting,
+                            onClick = {
+                                showVideoExportConfirmDialog = true
                             }
                         )
                     }
@@ -1308,46 +1355,143 @@ private fun Context.findActivity(): Activity? {
 private fun VideoDetailPlayer(
     photo: MediaData,
     isActive: Boolean,
+    viewModel: GalleryViewModel,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val mediaUri = remember(photo.id, photo.uri, photo.sourceUri) {
         photo.sourceUri ?: photo.uri
     }
-    val exoPlayer = remember(photo.id, mediaUri) {
+
+    PLog.d("VideoDetailPlayer", "VideoDetailPlayer recomposing/initializing. photoId: ${photo.id}, isActive: $isActive, mediaUri: $mediaUri")
+
+    val contentRepository = remember {
+        com.hinnka.mycamera.data.ContentRepository.getInstance(context)
+    }
+
+    var lutConfig by remember { mutableStateOf<com.hinnka.mycamera.lut.LutConfig?>(null) }
+    var recipeParams by remember { mutableStateOf<com.hinnka.mycamera.model.ColorRecipeParams?>(null) }
+    val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
+
+    LaunchedEffect(photo.id, refreshKey) {
+        withContext(Dispatchers.IO) {
+            PLog.d("VideoDetailPlayer", "Loading video metadata from DB.")
+            val metadata = com.hinnka.mycamera.gallery.GalleryManager.loadMetadata(context, photo.id) ?: photo.metadata
+            val lutId = metadata?.lutId
+            val params = metadata?.colorRecipeParams
+            PLog.d("VideoDetailPlayer", "Metadata loaded. lutId: $lutId, recipeEnabled: ${params != null}")
+
+            val config = if (lutId != null) {
+                contentRepository.lutManager.loadLut(lutId)
+            } else {
+                null
+            }
+
+            withContext(Dispatchers.Main) {
+                lutConfig = config
+                recipeParams = params
+            }
+        }
+    }
+
+    // Maintain the video LUT effect
+    val videoLutEffect = remember {
+        PLog.d("VideoDetailPlayer", "Instantiating new VideoLutEffect.")
+        VideoLutEffect(lutConfig, recipeParams)
+    }
+
+    // Update effect parameters dynamically on the GL pipeline without reconstruction
+    LaunchedEffect(lutConfig, recipeParams) {
+        PLog.d("VideoDetailPlayer", "Updating VideoLutEffect params. lut: ${lutConfig?.title}, recipe: ${recipeParams != null}")
+        videoLutEffect.update(lutConfig, recipeParams)
+    }
+
+    val exoPlayer = remember(photo.id, mediaUri, isActive) {
+        if (!isActive) return@remember null
+        PLog.d("VideoDetailPlayer", "Creating ExoPlayer for detail video.")
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(mediaUri))
             repeatMode = Player.REPEAT_MODE_OFF
-            prepare()
-            playWhenReady = true
+            setVideoEffects(listOf(videoLutEffect))
+
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    PLog.d("VideoDetailPlayer", "ExoPlayer state changed: $state")
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    PLog.e("VideoDetailPlayer", "ExoPlayer encountered error!", error)
+                }
+            })
         }
     }
 
     DisposableEffect(exoPlayer) {
-        onDispose { exoPlayer.release() }
-    }
-
-    LaunchedEffect(exoPlayer, isActive) {
-        exoPlayer.playWhenReady = isActive
-        if (!isActive) {
-            exoPlayer.pause()
+        onDispose {
+            if (exoPlayer != null) {
+                PLog.d("VideoDetailPlayer", "Disposing ExoPlayer.")
+                exoPlayer.release()
+            }
         }
     }
 
-    AndroidView(
-        factory = {
-            LayoutInflater.from(context).inflate(R.layout.view_motion_photo_player, null) as PlayerView
-        },
-        update = {
-            it.player = exoPlayer
-            it.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            it.useController = true
-            it.controllerAutoShow = false
-            it.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-            it.isVisible = true
-        },
-        modifier = modifier.autoRotate(matchParentSize = true)
-    )
+    LaunchedEffect(exoPlayer, isActive) {
+        PLog.d("VideoDetailPlayer", "VideoDetailPlayer isActive changed: $isActive, player: $exoPlayer")
+        if (exoPlayer != null && isActive) {
+            delay(150) // Wait for transitions to complete and EGL surface to be fully ready
+            PLog.d("VideoDetailPlayer", "Preparing and starting ExoPlayer.")
+            exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        }
+    }
+
+    if (exoPlayer != null) {
+        AndroidView(
+            factory = {
+                PLog.d("VideoDetailPlayer", "Creating PlayerView factory.")
+                LayoutInflater.from(context).inflate(R.layout.view_motion_photo_player, null) as PlayerView
+            },
+            update = {
+                PLog.d("VideoDetailPlayer", "Updating PlayerView with player.")
+                it.player = exoPlayer
+                it.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                it.useController = true
+                it.controllerAutoShow = false
+                it.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                it.isVisible = true
+            },
+            modifier = modifier.autoRotate(matchParentSize = true)
+        )
+    } else {
+        // Show video thumbnail with a play icon when player is not active
+        Box(
+            modifier = modifier.autoRotate(matchParentSize = true),
+            contentAlignment = Alignment.Center
+        ) {
+            val transformation = remember(photo) {
+                viewModel.getPhotoTransformation(photo)
+            }
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(photo.thumbnailUri)
+                    .crossfade(true)
+                    .apply {
+                        if (transformation != null) {
+                            transformations(transformation)
+                        }
+                    }
+                    .build(),
+                contentDescription = photo.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.size(64.dp)
+            )
+        }
+    }
 }
 
 /**
