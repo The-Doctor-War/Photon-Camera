@@ -301,6 +301,7 @@ data class CameraState(
     val useLivePhoto: Boolean = false,
     val droMode: String = "OFF",
     val tonemapMode: String = "FAST",
+    val fixTonemapPreview: Boolean = false,
     // 是否正在拍摄 Live Photo (用于 UI 动画)
     val isCapturingLivePhoto: Boolean = false,
     val applyUltraHDR: Boolean = true,

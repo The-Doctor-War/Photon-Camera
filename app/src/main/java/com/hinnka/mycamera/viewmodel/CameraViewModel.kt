@@ -333,6 +333,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val tonemapMode: StateFlow<String> = userPreferencesRepository.userPreferences
         .map { it.tonemapMode }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "FAST")
+    val fixTonemapPreview: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.fixTonemapPreview }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val applyUltraHDR: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.applyUltraHDR }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -547,6 +550,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setRawMinShutterSpeedNs(it.rawMinShutterSpeedNs)
                 cameraController.setDroMode(it.droMode)
                 cameraController.setTonemapMode(it.tonemapMode)
+                cameraController.setFixTonemapPreview(it.fixTonemapPreview)
                 if (cameraController.state.value.meteringMode != it.meteringMode) {
                     cameraController.setMeteringMode(it.meteringMode)
                 }
@@ -686,6 +690,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setUseLivePhoto(prefs.useLivePhoto && prefs.captureMode == CaptureMode.PHOTO)
                 cameraController.setDroMode(prefs.droMode)
                 cameraController.setTonemapMode(prefs.tonemapMode)
+                cameraController.setFixTonemapPreview(prefs.fixTonemapPreview)
 
                 // 应用保存的虚拟光圈
                 if (prefs.defaultVirtualAperture > 0f) {
@@ -3542,6 +3547,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setTonemapMode(mode: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveTonemapMode(mode)
+        }
+    }
+
+    fun setFixTonemapPreview(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveFixTonemapPreview(enabled)
         }
     }
 

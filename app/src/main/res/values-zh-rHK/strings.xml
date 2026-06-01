@@ -211,6 +211,10 @@
     <string name="settings_tonemap_mode_fast">快速</string>
     <string name="settings_tonemap_mode_high_quality">高品質</string>
     <string name="settings_tonemap_mode_off">停用</string>
+    <string name="settings_tonemap_mode_srgb">sRGB</string>
+    <string name="settings_tonemap_mode_rec709">Rec.709</string>
+    <string name="settings_fix_tonemap_preview">修復色調映射預覽異常</string>
+    <string name="settings_fix_tonemap_preview_description">部分裝置預覽已自帶 sRGB Gamma。開啟後只在預覽中先轉為線性再套用自訂色調曲線，拍攝輸出不變。</string>
 
     <!-- LUT -->
     <string name="filter_intensity">濾鏡強度</string>

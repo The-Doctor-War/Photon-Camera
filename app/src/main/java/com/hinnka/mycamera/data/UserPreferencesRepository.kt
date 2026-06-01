@@ -35,6 +35,13 @@ import com.hinnka.mycamera.video.VideoResolutionPreset
  */
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
 
+private fun sanitizeTonemapMode(mode: String): String {
+    return when (mode) {
+        "FAST", "HIGH_QUALITY", "SRGB", "REC709", "SRGB_ACR3", "REC709_ACR3" -> mode
+        else -> "FAST"
+    }
+}
+
 enum class VolumeKeyAction {
     NONE,
     CAPTURE,
@@ -122,6 +129,7 @@ data class UserPreferences(
     val useGpuAcceleration: Boolean = DeviceUtil.defaultGpuAcceleration, // 多帧合成是否使用 GPU 加速
     val droMode: String = "OFF", // DRO 模式
     val tonemapMode: String = "FAST", // 色调映射模式
+    val fixTonemapPreview: Boolean = false, // 修复部分设备自定义色调映射预览异常
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
     val colorSpace: ColorSpace = ColorSpace.SRGB,
     val logCurve: TransferCurve = TransferCurve.SRGB,
@@ -239,6 +247,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_GPU_ACCELERATION = booleanPreferencesKey("use_gpu_acceleration")
         private val DRO_MODE = stringPreferencesKey("dro_mode")
         private val TONEMAP_MODE = stringPreferencesKey("tonemap_mode")
+        private val FIX_TONEMAP_PREVIEW = booleanPreferencesKey("fix_tonemap_preview")
         private val APPLY_ULTRA_HDR = booleanPreferencesKey("apply_ultra_hdr")
         private val COLOR_SPACE = stringPreferencesKey("color_space")
         private val LOG_CURVE = stringPreferencesKey("log_curve")
@@ -364,7 +373,8 @@ class UserPreferencesRepository(private val context: Context) {
                 backgroundImage = preferences[BACKGROUND_IMAGE] ?: "camera_bg",
                 useGpuAcceleration = preferences[USE_GPU_ACCELERATION] ?: DeviceUtil.defaultGpuAcceleration,
                 droMode = preferences[DRO_MODE] ?: if (preferences[RAW_DRO_ENABLED_KEY] == true) "DR100" else "OFF",
-                tonemapMode = preferences[TONEMAP_MODE] ?: "FAST",
+                tonemapMode = sanitizeTonemapMode(preferences[TONEMAP_MODE] ?: "FAST"),
+                fixTonemapPreview = preferences[FIX_TONEMAP_PREVIEW] ?: false,
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
                 logCurve = TransferCurve.fromPersistedName(preferences[LOG_CURVE] ?: TransferCurve.SRGB.name),
@@ -1105,7 +1115,16 @@ class UserPreferencesRepository(private val context: Context) {
      */
     suspend fun saveTonemapMode(mode: String) {
         context.dataStore.edit { preferences ->
-            preferences[TONEMAP_MODE] = mode
+            preferences[TONEMAP_MODE] = sanitizeTonemapMode(mode)
+        }
+    }
+
+    /**
+     * 保存是否修复自定义色调映射预览异常
+     */
+    suspend fun saveFixTonemapPreview(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[FIX_TONEMAP_PREVIEW] = enabled
         }
     }
 

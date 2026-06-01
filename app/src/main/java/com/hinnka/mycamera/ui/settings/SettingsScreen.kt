@@ -209,6 +209,7 @@ fun SettingsScreen(
     val enableDevelopAnimation by viewModel.enableDevelopAnimation.collectAsState()
     val photoQuality by viewModel.photoQuality.collectAsState(initial = 95)
     val tonemapMode by viewModel.tonemapMode.collectAsState()
+    val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val useGpuAcceleration by viewModel.useGpuAcceleration.collectAsState()
     val useP010 by viewModel.useP010.collectAsState()
     val useHlg10 by viewModel.useHlg10.collectAsState()
@@ -963,10 +964,8 @@ fun SettingsScreen(
                             levels = listOf(
                                 "FAST" to stringResource(R.string.settings_tonemap_mode_fast),
                                 "HIGH_QUALITY" to stringResource(R.string.settings_tonemap_mode_high_quality),
-                                "OFF" to stringResource(R.string.settings_tonemap_mode_off),
-                                "SRGB" to "sRGB",
-                                "REC709" to "Rec.709",
-                                "ACR3" to stringResource(R.string.settings_tonemap_mode_acr3),
+                                "SRGB" to stringResource(R.string.settings_tonemap_mode_srgb),
+                                "REC709" to stringResource(R.string.settings_tonemap_mode_rec709),
                                 "SRGB_ACR3" to stringResource(R.string.settings_tonemap_mode_srgb_acr3),
                                 "REC709_ACR3" to stringResource(R.string.settings_tonemap_mode_rec709_acr3)
                             ),
@@ -974,6 +973,17 @@ fun SettingsScreen(
                             onLevelSelected = { viewModel.setTonemapMode(it) }
                         )
 
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_fix_tonemap_preview),
+                            description = stringResource(R.string.settings_fix_tonemap_preview_description),
+                            checked = fixTonemapPreview,
+                            onCheckedChange = { viewModel.setFixTonemapPreview(it) }
+                        )
 
 
                         if (state.isP010Supported) {
