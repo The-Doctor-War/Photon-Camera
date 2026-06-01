@@ -5,9 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.hardware.display.DisplayManager
-import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -107,9 +109,8 @@ import com.hinnka.mycamera.livephoto.VivoLivePhotoCreator
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.groupLutsForDisplay
 import com.hinnka.mycamera.utils.PLog
-import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -123,6 +124,7 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlin.io.copyTo
 import kotlin.io.inputStream
+import kotlin.math.max
 import kotlin.use
 
 class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryOwner {
@@ -164,7 +166,8 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
 
     private val userPreferencesRepository = UserPreferencesRepository(context)
 
-    private val processPhotoTaskMap = mutableMapOf<String, Deferred<*>>()
+    private val processPhotoTaskMap = mutableMapOf<String, Job>()
+    private val activePhotoProcessPaths = mutableSetOf<String>()
 
     private var processingInfo: ProcessingInfo? by mutableStateOf(null)
     private var expanded by mutableStateOf(false)
@@ -224,10 +227,17 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         File(dir, name).absolutePath
                     }
                     PLog.d(TAG, "Content changed detected: ${uri.lastPathSegment} $name size=$size")
+                    if (activePhotoProcessPaths.contains(path)) {
+                        PLog.d(TAG, "Ignore change for $path because phantom export is already running")
+                        return
+                    }
                     processPhotoTaskMap[path]?.cancel()
-                    processPhotoTaskMap[path] = lifecycleScope.async {
-                        delay(200L)
-                        if (isActive) {
+                    processPhotoTaskMap[path] = lifecycleScope.launch {
+                        var exportStarted = false
+                        try {
+                            delay(200L)
+                            if (!isActive) return@launch
+
                             // 在延迟后再次检查，此时上一个任务可能已经更新了 processingInfo
                             val info = processingInfo
                             if (info != null
@@ -236,7 +246,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                 && info.size >= size
                             ) {
                                 PLog.d(TAG, "Ignore change for $path as it matches current state (size $size)")
-                                return@async
+                                return@launch
                             }
                             if (info != null
                                 && info.relativePath == relativePath
@@ -244,9 +254,16 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                 && info.newSize >= size
                             ) {
                                 PLog.d(TAG, "Ignore change for $path as it matches current state (size $size)")
-                                return@async
+                                return@launch
                             }
+
+                            activePhotoProcessPaths += path
+                            exportStarted = true
                             photoProcessTask(uri, name, size, relativePath)
+                        } finally {
+                            if (exportStarted) {
+                                activePhotoProcessPaths -= path
+                            }
                             processPhotoTaskMap.remove(path)
                         }
                     }
@@ -434,14 +451,18 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             val videoFile = GalleryManager.getVideoFile(context, photoId)
             val photoFile = GalleryManager.getPhotoFile(context, photoId)
 
+            val exportedWidth = processedBitmap.width
+            val exportedHeight = processedBitmap.height
+            val thumbnail = createOverlayThumbnail(processedBitmap)
+
             FileOutputStream(tempExportFile).use { outputStream ->
                 processedBitmap.compress(Bitmap.CompressFormat.JPEG, 97, outputStream)
             }
 
             ExifWriter.writeExif(
                 tempExportFile, updatedMetadata.toCaptureInfo().copy(
-                    imageWidth = processedBitmap.width,
-                    imageHeight = processedBitmap.height
+                    imageWidth = exportedWidth,
+                    imageHeight = exportedHeight
                 )
             )
 
@@ -563,13 +584,15 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             shouldNotifyGallery = true
             PLog.d(TAG, "Exported URI saved: ${writeUri.lastPathSegment} $newName $newSize for photo $photoId")
 
-            val thumbnail = ThumbnailUtils.extractThumbnail(processedBitmap, 512, 512)
             processingInfo = processingInfo?.copy(
                 thumbnail = thumbnail,
                 newUri = writeUri,
                 newName = newName,
                 newSize = newSize
             )
+        } catch (e: CancellationException) {
+            PLog.d(TAG, "Phantom export cancelled for $name")
+            throw e
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to export photo", e)
         } finally {
@@ -580,6 +603,34 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             GalleryManager.notifyPhotoLibraryChanged()
         }
         delay(200L)
+    }
+
+    private fun createOverlayThumbnail(source: Bitmap): Bitmap? {
+        if (source.isRecycled || source.width <= 0 || source.height <= 0) return null
+
+        return try {
+            val thumbnailSize = 512
+            val scale = max(
+                thumbnailSize.toFloat() / source.width.toFloat(),
+                thumbnailSize.toFloat() / source.height.toFloat()
+            )
+            val scaledWidth = source.width * scale
+            val scaledHeight = source.height * scale
+            val left = (thumbnailSize - scaledWidth) / 2f
+            val top = (thumbnailSize - scaledHeight) / 2f
+            val output = Bitmap.createBitmap(thumbnailSize, thumbnailSize, Bitmap.Config.ARGB_8888)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            Canvas(output).drawBitmap(
+                source,
+                null,
+                RectF(left, top, left + scaledWidth, top + scaledHeight),
+                paint
+            )
+            output
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to create overlay thumbnail", e)
+            null
+        }
     }
 
     private fun initWindowParams() {
@@ -685,7 +736,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                         MainActivity::class.java
                                     ).apply {
                                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        if (processingInfo?.thumbnail != null) {
+                                        if (processingInfo?.thumbnail?.isRecycled == false) {
                                             val photoId = processingInfo.photoId
                                             putExtra("photoId", photoId)
                                             putExtra("route", Routes.photoDetail(photoId = photoId))
@@ -696,9 +747,10 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!showFilterPicker) {
-                        if (processingInfo?.thumbnail != null) {
+                        val thumbnail = processingInfo?.thumbnail?.takeIf { !it.isRecycled }
+                        if (thumbnail != null) {
                             Image(
-                                bitmap = processingInfo.thumbnail.asImageBitmap(),
+                                bitmap = thumbnail.asImageBitmap(),
                                 contentDescription = stringResource(R.string.app_name),
                                 modifier = Modifier
                                     .size(40.dp)
