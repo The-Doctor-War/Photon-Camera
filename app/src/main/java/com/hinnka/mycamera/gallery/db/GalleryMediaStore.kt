@@ -264,7 +264,10 @@ object GalleryMediaStore {
             applyEffectsToVideo = metadata.applyEffectsToVideo,
             spectralFilmEnabled = metadata.spectralFilmEnabled,
             spectralFilmStock = metadata.spectralFilmStock,
-            spectralFilmPrint = metadata.spectralFilmPrint
+            spectralFilmPrint = metadata.spectralFilmPrint,
+            spectralFilmCDensityGain = metadata.spectralFilmCDensityGain,
+            spectralFilmMDensityGain = metadata.spectralFilmMDensityGain,
+            spectralFilmYDensityGain = metadata.spectralFilmYDensityGain
         )
     }
 
@@ -393,7 +396,10 @@ object GalleryMediaStore {
             applyEffectsToVideo = applyEffectsToVideo,
             spectralFilmEnabled = spectralFilmEnabled,
             spectralFilmStock = spectralFilmStock,
-            spectralFilmPrint = spectralFilmPrint
+            spectralFilmPrint = spectralFilmPrint,
+            spectralFilmCDensityGain = spectralFilmCDensityGain,
+            spectralFilmMDensityGain = spectralFilmMDensityGain,
+            spectralFilmYDensityGain = spectralFilmYDensityGain
         )
     }
 

@@ -110,5 +110,8 @@ data class GalleryMediaEntity(
     val applyEffectsToVideo: Boolean,
     val spectralFilmEnabled: Boolean,
     val spectralFilmStock: String?,
-    val spectralFilmPrint: String?
+    val spectralFilmPrint: String?,
+    val spectralFilmCDensityGain: Float,
+    val spectralFilmMDensityGain: Float,
+    val spectralFilmYDensityGain: Float
 )

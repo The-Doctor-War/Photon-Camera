@@ -29,6 +29,7 @@ import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawProcessingPreferences
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
 import com.hinnka.mycamera.utils.PLog
@@ -1212,7 +1213,12 @@ object GalleryManager {
                 rawDcpId = metadata.rawDcpId,
                 spectralFilmEnabled = metadata.spectralFilmEnabled,
                 spectralFilmStock = metadata.spectralFilmStock,
-                spectralFilmPrint = metadata.spectralFilmPrint
+                spectralFilmPrint = metadata.spectralFilmPrint,
+                spectralFilmTuning = SpectralFilmTuning(
+                    cDensityGain = metadata.spectralFilmCDensityGain,
+                    mDensityGain = metadata.spectralFilmMDensityGain,
+                    yDensityGain = metadata.spectralFilmYDensityGain
+                )
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
@@ -1789,7 +1795,12 @@ object GalleryManager {
                 rawDcpId = metadata.rawDcpId,
                 spectralFilmEnabled = metadata.spectralFilmEnabled,
                 spectralFilmStock = metadata.spectralFilmStock,
-                spectralFilmPrint = metadata.spectralFilmPrint
+                spectralFilmPrint = metadata.spectralFilmPrint,
+                spectralFilmTuning = SpectralFilmTuning(
+                    cDensityGain = metadata.spectralFilmCDensityGain,
+                    mDensityGain = metadata.spectralFilmMDensityGain,
+                    yDensityGain = metadata.spectralFilmYDensityGain
+                )
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
@@ -2762,6 +2773,11 @@ object GalleryManager {
                         spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
                         spectralFilmStock = updatedMetadata.spectralFilmStock,
                         spectralFilmPrint = updatedMetadata.spectralFilmPrint,
+                        spectralFilmTuning = SpectralFilmTuning(
+                            cDensityGain = updatedMetadata.spectralFilmCDensityGain,
+                            mDensityGain = updatedMetadata.spectralFilmMDensityGain,
+                            yDensityGain = updatedMetadata.spectralFilmYDensityGain
+                        ),
                         onMetadata = { raw ->
                             updatedMetadata = updatedMetadata.merge(raw)
                         }
@@ -2902,6 +2918,11 @@ object GalleryManager {
                     spectralFilmEnabled = updatedMetadata?.spectralFilmEnabled ?: false,
                     spectralFilmStock = updatedMetadata?.spectralFilmStock,
                     spectralFilmPrint = updatedMetadata?.spectralFilmPrint,
+                    spectralFilmTuning = SpectralFilmTuning(
+                        cDensityGain = updatedMetadata?.spectralFilmCDensityGain ?: 1f,
+                        mDensityGain = updatedMetadata?.spectralFilmMDensityGain ?: 1f,
+                        yDensityGain = updatedMetadata?.spectralFilmYDensityGain ?: 1f
+                    ),
                     onMetadata = { raw ->
                         updatedMetadata = updatedMetadata?.merge(raw) ?: MediaMetadata().merge(raw)
                     }

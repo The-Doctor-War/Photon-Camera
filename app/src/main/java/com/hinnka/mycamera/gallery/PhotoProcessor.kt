@@ -21,6 +21,7 @@ import com.hinnka.mycamera.processor.DepthBokehProcessor
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrRenderResult
 import com.hinnka.mycamera.raw.RawProcessingPreferences
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.YuvProcessor
@@ -456,7 +457,12 @@ class PhotoProcessor(
             rawDcpId = metadata.rawDcpId,
             spectralFilmEnabled = metadata.spectralFilmEnabled,
             spectralFilmStock = metadata.spectralFilmStock,
-            spectralFilmPrint = metadata.spectralFilmPrint
+            spectralFilmPrint = metadata.spectralFilmPrint,
+            spectralFilmTuning = SpectralFilmTuning(
+                cDensityGain = metadata.spectralFilmCDensityGain,
+                mDensityGain = metadata.spectralFilmMDensityGain,
+                yDensityGain = metadata.spectralFilmYDensityGain
+            )
         ) ?: return@withContext null
         prepareUltraHdrSourceFromRawResult(
             context = context,
@@ -522,7 +528,12 @@ class PhotoProcessor(
             rawDcpId = metadata.rawDcpId,
             spectralFilmEnabled = metadata.spectralFilmEnabled,
             spectralFilmStock = metadata.spectralFilmStock,
-            spectralFilmPrint = metadata.spectralFilmPrint
+            spectralFilmPrint = metadata.spectralFilmPrint,
+            spectralFilmTuning = SpectralFilmTuning(
+                cDensityGain = metadata.spectralFilmCDensityGain,
+                mDensityGain = metadata.spectralFilmMDensityGain,
+                yDensityGain = metadata.spectralFilmYDensityGain
+            )
         )
 
         result = bitmap?.let {

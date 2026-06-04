@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [GalleryMediaEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @androidx.room.TypeConverters(GalleryConverters::class)
@@ -38,6 +38,14 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN spectralFilmCDensityGain REAL NOT NULL DEFAULT 1.0")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN spectralFilmMDensityGain REAL NOT NULL DEFAULT 1.0")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN spectralFilmYDensityGain REAL NOT NULL DEFAULT 1.0")
+            }
+        }
+
         fun getInstance(context: Context): GalleryDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -45,7 +53,7 @@ abstract class GalleryDatabase : RoomDatabase() {
                     GalleryDatabase::class.java,
                     "gallery_media.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

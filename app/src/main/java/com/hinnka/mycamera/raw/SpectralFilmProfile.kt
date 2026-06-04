@@ -33,6 +33,50 @@ data class FilmDensityWire(
     val dMax: FloatArray
 )
 
+data class SpectralFilmTuning(
+    val cDensityGain: Float = 1f,
+    val mDensityGain: Float = 1f,
+    val yDensityGain: Float = 1f
+) {
+    fun normalized(): SpectralFilmTuning {
+        return SpectralFilmTuning(
+            cDensityGain = cDensityGain.coerceIn(MIN_DENSITY_GAIN, MAX_DENSITY_GAIN),
+            mDensityGain = mDensityGain.coerceIn(MIN_DENSITY_GAIN, MAX_DENSITY_GAIN),
+            yDensityGain = yDensityGain.coerceIn(MIN_DENSITY_GAIN, MAX_DENSITY_GAIN)
+        )
+    }
+
+    fun cacheKey(): String {
+        val t = normalized()
+        return "${t.cDensityGain}:${t.mDensityGain}:${t.yDensityGain}"
+    }
+
+    fun negativeFilmDensityGainC(): Float = userFacingDensityToNegativeFilmGain(normalized().cDensityGain)
+
+    fun negativeFilmDensityGainM(): Float = userFacingDensityToNegativeFilmGain(normalized().mDensityGain)
+
+    fun negativeFilmDensityGainY(): Float = userFacingDensityToNegativeFilmGain(normalized().yDensityGain)
+
+    companion object {
+        const val MIN_DENSITY_GAIN = 0.5f
+        const val MAX_DENSITY_GAIN = 1.5f
+        val DEFAULT = SpectralFilmTuning()
+
+        private fun userFacingDensityToNegativeFilmGain(gain: Float): Float {
+            return 2f - gain
+        }
+    }
+}
+
+data class SpectralFilmSelection(
+    val id: String,
+    val tuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT
+) {
+    fun normalized(): SpectralFilmSelection {
+        return copy(tuning = tuning.normalized())
+    }
+}
+
 data class PrintPaperInfo(
     val referenceIlluminant: String,
     val viewingIlluminant: String
@@ -290,11 +334,13 @@ object SpectralFilmProfile {
     private var cachedCombined: SpectralFilmLut? = null
     private var cachedCombinedFilmKey: String? = null
     private var cachedCombinedPrintKey: String? = null
+    private var cachedCombinedTuningKey: String? = null
 
     @Volatile
     private var cachedPreviewConfig: LutConfig? = null
     private var cachedPreviewFilmKey: String? = null
     private var cachedPreviewPrintKey: String? = null
+    private var cachedPreviewTuningKey: String? = null
 
     fun loadDefaultLut(context: Context): SpectralFilmLut? {
         cachedDefault?.let { return it }
@@ -311,21 +357,24 @@ object SpectralFilmProfile {
     fun loadCombinedLut(
         context: Context,
         filmStock: String,
-        printPaper: String
+        printPaper: String,
+        tuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT
     ): SpectralFilmLut? {
-        if (cachedCombinedFilmKey == filmStock && cachedCombinedPrintKey == printPaper) {
+        val tuningKey = tuning.cacheKey()
+        if (cachedCombinedFilmKey == filmStock && cachedCombinedPrintKey == printPaper && cachedCombinedTuningKey == tuningKey) {
             cachedCombined?.let { return it }
         }
         return synchronized(this) {
-            if (cachedCombinedFilmKey == filmStock && cachedCombinedPrintKey == printPaper) {
+            if (cachedCombinedFilmKey == filmStock && cachedCombinedPrintKey == printPaper && cachedCombinedTuningKey == tuningKey) {
                 cachedCombined?.let { return it }
             }
             val filmAsset = "spektrafilm/profiles/${filmStock}_film.cube"
-            val lut = loadCombinedLutInternal(context, filmStock, printPaper, filmAsset)
+            val lut = loadCombinedLutInternal(context, filmStock, printPaper, filmAsset, tuning.normalized())
             if (lut != null) {
                 cachedCombined = lut
                 cachedCombinedFilmKey = filmStock
                 cachedCombinedPrintKey = printPaper
+                cachedCombinedTuningKey = tuningKey
             }
             lut
         }
@@ -334,19 +383,22 @@ object SpectralFilmProfile {
     fun loadPreviewLutConfig(
         context: Context,
         filmStock: String,
-        printPaper: String
+        printPaper: String,
+        tuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT
     ): LutConfig? {
-        if (cachedPreviewFilmKey == filmStock && cachedPreviewPrintKey == printPaper) {
+        val tuningKey = tuning.cacheKey()
+        if (cachedPreviewFilmKey == filmStock && cachedPreviewPrintKey == printPaper && cachedPreviewTuningKey == tuningKey) {
             cachedPreviewConfig?.let { return it }
         }
         return synchronized(this) {
-            if (cachedPreviewFilmKey == filmStock && cachedPreviewPrintKey == printPaper) {
+            if (cachedPreviewFilmKey == filmStock && cachedPreviewPrintKey == printPaper && cachedPreviewTuningKey == tuningKey) {
                 cachedPreviewConfig?.let { return it }
             }
-            loadCombinedLut(context, filmStock, printPaper)?.toPreviewLutConfig()?.also { config ->
+            loadCombinedLut(context, filmStock, printPaper, tuning)?.toPreviewLutConfig()?.also { config ->
                 cachedPreviewConfig = config
                 cachedPreviewFilmKey = filmStock
                 cachedPreviewPrintKey = printPaper
+                cachedPreviewTuningKey = tuningKey
             }
         }
     }
@@ -626,7 +678,8 @@ object SpectralFilmProfile {
         context: Context,
         filmStock: String,
         printPaper: String,
-        filmAssetPath: String
+        filmAssetPath: String,
+        tuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT
     ): SpectralFilmLut? {
         val startTime = System.currentTimeMillis()
         val filmInfo = FilmStockRegistry.get(filmStock)
@@ -656,7 +709,7 @@ object SpectralFilmProfile {
         val printModel = SpectralPrintModelRegistry.load(context) ?: return null
         val densityWire = FilmDensityWireRegistry.get(filmStock)
 
-        val combinedValues = combineWithDynamicPrint(filmStock, printPaper, filmData, printModel, densityWire)
+        val combinedValues = combineWithDynamicPrint(filmStock, printPaper, filmData, printModel, densityWire, tuning)
             ?: return null
         val elapsed = System.currentTimeMillis() - startTime
         PLog.d(
@@ -672,7 +725,7 @@ object SpectralFilmProfile {
             type = filmInfo.type,
             referenceIlluminant = filmInfo.referenceIlluminant,
             viewingIlluminant = printInfo.viewingIlluminant,
-            sourceKey = "$filmStock:$printPaper:${filmInfo.type}:${filmInfo.referenceIlluminant}:${printInfo.referenceIlluminant}:${printInfo.viewingIlluminant}:wire=${densityWire?.dMax?.joinToString() ?: "fallback"}",
+            sourceKey = "$filmStock:$printPaper:${filmInfo.type}:${filmInfo.referenceIlluminant}:${printInfo.referenceIlluminant}:${printInfo.viewingIlluminant}:wire=${densityWire?.dMax?.joinToString() ?: "fallback"}:tuning=${tuning.cacheKey()}",
             size = LUT_SIZE,
             values = combinedValues
         )
@@ -733,7 +786,8 @@ object SpectralFilmProfile {
         printPaper: String,
         filmData: FloatArray,
         model: SpectralFilmPrintModel,
-        densityWire: FilmDensityWire?
+        densityWire: FilmDensityWire?,
+        tuning: SpectralFilmTuning
     ): FloatArray? {
         val filmModel = model.films[filmStock]
         val paperModel = model.papers[printPaper]
@@ -765,15 +819,18 @@ object SpectralFilmProfile {
         val dRange0 = dMaxFilm[0] - dMinFilm[0]
         val dRange1 = dMaxFilm[1] - dMinFilm[1]
         val dRange2 = dMaxFilm[2] - dMinFilm[2]
+        val cNegativeFilmGain = tuning.negativeFilmDensityGainC()
+        val mNegativeFilmGain = tuning.negativeFilmDensityGainM()
+        val yNegativeFilmGain = tuning.negativeFilmDensityGainY()
 
         val filmSpectralDensity = FloatArray(wavelengths)
         val printDensity = FloatArray(3)
         val paperSpectralDensity = FloatArray(wavelengths)
 
         for (i in 0 until (LUT_SIZE * LUT_SIZE * LUT_SIZE)) {
-            val cDensity = dMinFilm[0] + filmData[i * 3] * dRange0
-            val mDensity = dMinFilm[1] + filmData[i * 3 + 1] * dRange1
-            val yDensity = dMinFilm[2] + filmData[i * 3 + 2] * dRange2
+            val cDensity = dMinFilm[0] + filmData[i * 3] * dRange0 * cNegativeFilmGain
+            val mDensity = dMinFilm[1] + filmData[i * 3 + 1] * dRange1 * mNegativeFilmGain
+            val yDensity = dMinFilm[2] + filmData[i * 3 + 2] * dRange2 * yNegativeFilmGain
 
             for (w in 0 until wavelengths) {
                 val base = w * 3

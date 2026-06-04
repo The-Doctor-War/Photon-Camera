@@ -50,6 +50,8 @@ import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.raw.SpectralFilmProfile
+import com.hinnka.mycamera.raw.SpectralFilmSelection
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
 import com.hinnka.mycamera.ui.camera.CameraGLSurfaceView
 import com.hinnka.mycamera.utils.*
@@ -101,7 +103,8 @@ private fun UserPreferences.getBaselineLutId(target: BaselineColorCorrectionTarg
 private data class RawSpectralFilmSettings(
     val enabled: Boolean,
     val stock: String?,
-    val print: String?
+    val print: String?,
+    val tuning: SpectralFilmTuning
 )
 
 private data class PresetMatchSnapshot(
@@ -742,6 +745,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val rawSpectralFilmPrint: StateFlow<String?> = userPreferencesRepository.userPreferences
         .map { it.rawSpectralFilmPrint }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val rawSpectralFilmSelection: StateFlow<SpectralFilmSelection?> = userPreferencesRepository.userPreferences
+        .map { prefs ->
+            prefs.rawSpectralFilmStock?.let { stock ->
+                SpectralFilmSelection(
+                    id = stock,
+                    tuning = prefs.rawSpectralFilmTuningsByStock[stock] ?: SpectralFilmTuning.DEFAULT
+                )
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val photoQuality: Flow<Int> = userPreferencesRepository.userPreferences.map { it.photoQuality }
 
     val defaultFocalLength: Flow<Float> = userPreferencesRepository.userPreferences.map { it.defaultFocalLength }
@@ -1355,6 +1368,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
     }
+    fun setRawSpectralFilmSelection(selection: SpectralFilmSelection?) {
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val previousStock = prefs.rawSpectralFilmStock
+            applyCameraFeatureUpdate(
+                CameraFeatureUpdate(rawSpectralFilmStock = SettingValue(selection?.id))
+            )
+            if (selection != null && selection.id == previousStock) {
+                userPreferencesRepository.saveRawSpectralFilmTuning(selection.id, selection.tuning)
+            }
+            clearActivePresetIfCurrentSettingsMismatch()
+        }
+    }
     fun setRawNlmNoiseFactor(value: Float) {
         viewModelScope.launch { userPreferencesRepository.saveRawNlmNoiseFactor(value) }
     }
@@ -1574,6 +1600,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             spectralFilmEnabled = spectralFilmSettings.enabled,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
+            spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
+            spectralFilmMDensityGain = spectralFilmSettings.tuning.mDensityGain,
+            spectralFilmYDensityGain = spectralFilmSettings.tuning.yDensityGain,
             width = width,
             height = height,
             ratio = aspectRatio,
@@ -1605,10 +1634,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun resolveRawSpectralFilmSettings(
         userPrefs: UserPreferences?
     ): RawSpectralFilmSettings {
+        val stock = userPrefs?.rawSpectralFilmStock ?: "kodak_portra_400"
         return RawSpectralFilmSettings(
             enabled = userPrefs?.rawSpectralFilmEnabled ?: false,
-            stock = userPrefs?.rawSpectralFilmStock ?: "kodak_portra_400",
-            print = userPrefs?.rawSpectralFilmPrint ?: "kodak_portra_endura"
+            stock = stock,
+            print = userPrefs?.rawSpectralFilmPrint ?: "kodak_portra_endura",
+            tuning = (userPrefs?.rawSpectralFilmTuningsByStock?.get(stock) ?: SpectralFilmTuning.DEFAULT).normalized()
         )
     }
 
@@ -1624,7 +1655,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             return SpectralFilmProfile.loadPreviewLutConfig(
                 getApplication<Application>(),
                 stock,
-                print
+                print,
+                settings.tuning
             ).also { config ->
                 if (config == null) {
                     PLog.w(TAG, "Failed to load spectral film preview LUT: stock=$stock, print=$print")
@@ -3564,6 +3596,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 spectralFilmEnabled = spectralFilmSettings.enabled,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
+                spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
+                spectralFilmMDensityGain = spectralFilmSettings.tuning.mDensityGain,
+                spectralFilmYDensityGain = spectralFilmSettings.tuning.yDensityGain,
                 width = image.width,
                 height = image.height,
                 ratio = aspectRatio,
@@ -3690,6 +3725,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 spectralFilmEnabled = spectralFilmSettings.enabled,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
+                spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
+                spectralFilmMDensityGain = spectralFilmSettings.tuning.mDensityGain,
+                spectralFilmYDensityGain = spectralFilmSettings.tuning.yDensityGain,
                 width = bitmap.width,
                 height = bitmap.height,
                 ratio = mapVideoAspectRatioToPhotoAspectRatio(currentState.videoConfig.aspectRatio),
@@ -3831,6 +3869,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 spectralFilmEnabled = spectralFilmSettings.enabled,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
+                spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
+                spectralFilmMDensityGain = spectralFilmSettings.tuning.mDensityGain,
+                spectralFilmYDensityGain = spectralFilmSettings.tuning.yDensityGain,
                 width = (images[0].width.toFloat() * superResScale).roundToInt(),
                 height = (images[0].height.toFloat() * superResScale).roundToInt(),
                 ratio = aspectRatio,
@@ -3984,6 +4025,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             spectralFilmEnabled = spectralFilmSettings.enabled,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
+            spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
+            spectralFilmMDensityGain = spectralFilmSettings.tuning.mDensityGain,
+            spectralFilmYDensityGain = spectralFilmSettings.tuning.yDensityGain,
             width = image.width,
             height = image.height,
             ratio = aspectRatio,

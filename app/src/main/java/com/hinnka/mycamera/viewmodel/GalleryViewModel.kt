@@ -34,6 +34,8 @@ import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawProcessingPreferences
+import com.hinnka.mycamera.raw.SpectralFilmSelection
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.ui.gallery.CropAspectOption
 import com.hinnka.mycamera.ui.gallery.calculateInitialCropRect
 import com.hinnka.mycamera.utils.PLog
@@ -327,6 +329,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     var editRawSpectralFilmStock = MutableStateFlow<String?>(null)
         private set
     var editRawSpectralFilmPrint = MutableStateFlow<String?>(null)
+        private set
+    var editRawSpectralFilmCDensityGain = MutableStateFlow(1f)
+        private set
+    var editRawSpectralFilmMDensityGain = MutableStateFlow(1f)
+        private set
+    var editRawSpectralFilmYDensityGain = MutableStateFlow(1f)
         private set
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1048,6 +1056,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawSpectralFilmEnabled.value = m.spectralFilmEnabled
             editRawSpectralFilmStock.value = m.spectralFilmStock ?: "kodak_portra_400"
             editRawSpectralFilmPrint.value = m.spectralFilmPrint ?: "kodak_portra_endura"
+            editRawSpectralFilmCDensityGain.value = m.spectralFilmCDensityGain
+            editRawSpectralFilmMDensityGain.value = m.spectralFilmMDensityGain
+            editRawSpectralFilmYDensityGain.value = m.spectralFilmYDensityGain
             _editAiDenoiseStrength.value = if (m.hasAiDenoisedBase) m.aiDenoiseStrength ?: 1.0f else 0.0f
             restoreCropEditState(photo, m)
 
@@ -1622,6 +1633,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawSpectralFilmEnabled.value = metadata.spectralFilmEnabled
                 editRawSpectralFilmStock.value = metadata.spectralFilmStock ?: "kodak_portra_400"
                 editRawSpectralFilmPrint.value = metadata.spectralFilmPrint ?: "kodak_portra_endura"
+                editRawSpectralFilmCDensityGain.value = metadata.spectralFilmCDensityGain
+                editRawSpectralFilmMDensityGain.value = metadata.spectralFilmMDensityGain
+                editRawSpectralFilmYDensityGain.value = metadata.spectralFilmYDensityGain
                 restoreCropEditState(targetPhoto, metadata)
                 // 智能初始化：导入的照片默认值为 0，App 拍摄的则回退到当前全局配置
                 editSharpening.value =
@@ -1662,6 +1676,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawSpectralFilmEnabled.value = false
                 editRawSpectralFilmStock.value = "kodak_portra_400"
                 editRawSpectralFilmPrint.value = "kodak_portra_endura"
+                editRawSpectralFilmCDensityGain.value = 1f
+                editRawSpectralFilmMDensityGain.value = 1f
+                editRawSpectralFilmYDensityGain.value = 1f
                 editComputationalAperture.value = null
                 editFocusPointX.value = null
                 editFocusPointY.value = null
@@ -1702,6 +1719,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawSpectralFilmEnabled.value = false
         editRawSpectralFilmStock.value = null
         editRawSpectralFilmPrint.value = null
+        editRawSpectralFilmCDensityGain.value = 1f
+        editRawSpectralFilmMDensityGain.value = 1f
+        editRawSpectralFilmYDensityGain.value = 1f
     }
 
     /**
@@ -1821,6 +1841,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val spectralFilmEnabled = editRawSpectralFilmEnabled.value
         val spectralFilmStock = editRawSpectralFilmStock.value
         val spectralFilmPrint = editRawSpectralFilmPrint.value
+        val spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value
+        val spectralFilmMDensityGain = editRawSpectralFilmMDensityGain.value
+        val spectralFilmYDensityGain = editRawSpectralFilmYDensityGain.value
 
         viewModelScope.launch {
             val context = getApplication<Application>()
@@ -1843,7 +1866,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     baselineColorRecipeParams = baselineRecipeParams,
                     spectralFilmEnabled = spectralFilmEnabled,
                     spectralFilmStock = spectralFilmStock,
-                    spectralFilmPrint = spectralFilmPrint
+                    spectralFilmPrint = spectralFilmPrint,
+                    spectralFilmCDensityGain = spectralFilmCDensityGain,
+                    spectralFilmMDensityGain = spectralFilmMDensityGain,
+                    spectralFilmYDensityGain = spectralFilmYDensityGain
                 )
             }
             withContext(Dispatchers.Main) {
@@ -1916,13 +1942,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         persistRawEditMetadata(mediaData, onComplete)
     }
 
-    fun saveRawSpectralFilmStock(mediaData: MediaData, stock: String?, onComplete: ((Boolean) -> Unit)? = null) {
-        editRawSpectralFilmStock.value = stock
+    fun saveRawSpectralFilmPrint(mediaData: MediaData, print: String?, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawSpectralFilmPrint.value = print
         persistRawEditMetadata(mediaData, onComplete)
     }
 
-    fun saveRawSpectralFilmPrint(mediaData: MediaData, print: String?, onComplete: ((Boolean) -> Unit)? = null) {
-        editRawSpectralFilmPrint.value = print
+    fun saveRawSpectralFilmSelection(
+        mediaData: MediaData,
+        selection: SpectralFilmSelection?,
+        onComplete: ((Boolean) -> Unit)? = null
+    ) {
+        editRawSpectralFilmStock.value = selection?.id
+        val tuning = selection?.tuning?.normalized() ?: SpectralFilmTuning.DEFAULT
+        editRawSpectralFilmCDensityGain.value = tuning.cDensityGain
+        editRawSpectralFilmMDensityGain.value = tuning.mDensityGain
+        editRawSpectralFilmYDensityGain.value = tuning.yDensityGain
         persistRawEditMetadata(mediaData, onComplete)
     }
 
@@ -2160,6 +2194,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         baselineColorRecipeParams = editRawBaselineLutId.value?.let {
                             editRawBaselineRecipeParams.value
                         },
+                        spectralFilmEnabled = editRawSpectralFilmEnabled.value,
+                        spectralFilmStock = editRawSpectralFilmStock.value,
+                        spectralFilmPrint = editRawSpectralFilmPrint.value,
+                        spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value,
+                        spectralFilmMDensityGain = editRawSpectralFilmMDensityGain.value,
+                        spectralFilmYDensityGain = editRawSpectralFilmYDensityGain.value,
                         computationalAperture = editComputationalAperture.value,
                         focusPointX = editFocusPointX.value,
                         focusPointY = editFocusPointY.value,
@@ -2463,6 +2503,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         baselineTarget = rawBaselineLutId?.let { BaselineColorCorrectionTarget.RAW },
                         baselineLutId = rawBaselineLutId,
                         baselineColorRecipeParams = rawBaselineRecipeParams,
+                        spectralFilmEnabled = editRawSpectralFilmEnabled.value,
+                        spectralFilmStock = editRawSpectralFilmStock.value,
+                        spectralFilmPrint = editRawSpectralFilmPrint.value,
+                        spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value,
+                        spectralFilmMDensityGain = editRawSpectralFilmMDensityGain.value,
+                        spectralFilmYDensityGain = editRawSpectralFilmYDensityGain.value,
                         computationalAperture = editComputationalAperture.value,
                         focusPointX = editFocusPointX.value,
                         focusPointY = editFocusPointY.value,

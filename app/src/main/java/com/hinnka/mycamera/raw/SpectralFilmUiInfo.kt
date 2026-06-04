@@ -37,6 +37,17 @@ object SpectralFilmUiInfo {
         "kodak_ultra_endura"
     )
 
+    private val positiveFilms = setOf(
+        "fujifilm_provia_100f",
+        "fujifilm_velvia_100",
+        "kodak_ektachrome_100",
+        "kodak_kodachrome_64"
+    )
+
+    fun isPositiveFilm(id: String?): Boolean {
+        return id in positiveFilms
+    }
+
     fun getFilmDisplayName(id: String): String {
         return when (id) {
             "fujifilm_c200" -> "Fujifilm C200"

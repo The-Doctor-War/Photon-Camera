@@ -108,6 +108,9 @@ data class MediaMetadata(
     val spectralFilmEnabled: Boolean = false,
     val spectralFilmStock: String? = null,
     val spectralFilmPrint: String? = null,
+    val spectralFilmCDensityGain: Float = 1f,
+    val spectralFilmMDensityGain: Float = 1f,
+    val spectralFilmYDensityGain: Float = 1f,
 ) {
     /**
      * 将元数据转换为 CaptureInfo，用于写入 EXIF
@@ -342,6 +345,9 @@ data class MediaMetadata(
                     spectralFilmEnabled = obj.optBoolean("spectralFilmEnabled", false),
                     spectralFilmStock = if (obj.isNull("spectralFilmStock")) null else obj.optString("spectralFilmStock"),
                     spectralFilmPrint = if (obj.isNull("spectralFilmPrint")) null else obj.optString("spectralFilmPrint"),
+                    spectralFilmCDensityGain = if (obj.isNull("spectralFilmCDensityGain")) 1f else obj.optDouble("spectralFilmCDensityGain").toFloat(),
+                    spectralFilmMDensityGain = if (obj.isNull("spectralFilmMDensityGain")) 1f else obj.optDouble("spectralFilmMDensityGain").toFloat(),
+                    spectralFilmYDensityGain = if (obj.isNull("spectralFilmYDensityGain")) 1f else obj.optDouble("spectralFilmYDensityGain").toFloat(),
                 )
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to parse JSON", e)

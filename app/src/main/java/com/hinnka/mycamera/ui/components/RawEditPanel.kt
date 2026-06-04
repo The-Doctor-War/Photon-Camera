@@ -5,17 +5,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,10 +25,12 @@ import androidx.compose.ui.text.font.FontWeight
 import android.graphics.Bitmap
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
-import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
+import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
+import com.hinnka.mycamera.raw.SpectralFilmTuning
+import kotlin.math.roundToInt
 
 enum class RawEditPanelContentMode {
     FULL,
@@ -52,7 +53,7 @@ fun RawEditPanel(
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
     spectralFilmEnabled: Boolean,
-    spectralFilmStock: String?,
+    spectralFilmSelection: SpectralFilmSelection?,
     spectralFilmPrint: String?,
     onSelectDcp: (String?) -> Unit,
     onImportDcp: () -> Unit,
@@ -64,7 +65,7 @@ fun RawEditPanel(
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onSpectralFilmEnabledChange: (Boolean) -> Unit,
-    onSpectralFilmStockChange: (String?) -> Unit,
+    onSpectralFilmSelectionChange: (SpectralFilmSelection?) -> Unit,
     onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
     onAdjustmentEnd: () -> Unit,
@@ -72,6 +73,19 @@ fun RawEditPanel(
     contentMode: RawEditPanelContentMode = RawEditPanelContentMode.FULL,
     modifier: Modifier = Modifier
 ) {
+    var localSpectralFilmTuning by remember { mutableStateOf(spectralFilmSelection?.tuning ?: SpectralFilmTuning.DEFAULT) }
+
+    LaunchedEffect(spectralFilmSelection) {
+        localSpectralFilmTuning = spectralFilmSelection?.tuning ?: SpectralFilmTuning.DEFAULT
+    }
+
+    fun commitSpectralFilmDensityGains() {
+        val selection = spectralFilmSelection ?: return
+        onSpectralFilmSelectionChange(selection.copy(tuning = localSpectralFilmTuning))
+        onAdjustmentEnd()
+    }
+    var spectralFilmTuningExpanded by remember(spectralFilmSelection?.id) { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -106,16 +120,68 @@ fun RawEditPanel(
         Spacer(modifier = Modifier.height(8.dp))
 
         if (spectralFilmEnabled) {
+            val isPositiveFilm = SpectralFilmUiInfo.isPositiveFilm(spectralFilmSelection?.id)
             RawSpectralFilmSelector(
-                selectedFilm = spectralFilmStock,
-                onSelectFilm = onSpectralFilmStockChange
+                selectedFilm = spectralFilmSelection?.id,
+                onSelectFilm = { film ->
+                    onSpectralFilmSelectionChange(film?.let { SpectralFilmSelection(it) })
+                }
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            RawSpectralPrintSelector(
-                selectedPrint = spectralFilmPrint,
-                onSelectPrint = onSpectralFilmPrintChange
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+            if (!isPositiveFilm) {
+                Spacer(modifier = Modifier.height(16.dp))
+                RawSpectralPrintSelector(
+                    selectedPrint = spectralFilmPrint,
+                    onSelectPrint = onSpectralFilmPrintChange
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                if (contentMode != RawEditPanelContentMode.QUICK) {
+                    RawSpectralFilmTuningHeader(
+                        expanded = spectralFilmTuningExpanded,
+                        onClick = { spectralFilmTuningExpanded = !spectralFilmTuningExpanded }
+                    )
+                    if (spectralFilmTuningExpanded) {
+                        SliderSettingItem(
+                            title = stringResource(R.string.settings_spectral_film_c_density_gain),
+                            value = localSpectralFilmTuning.cDensityGain,
+                            valueRange = SpectralFilmTuning.MIN_DENSITY_GAIN..SpectralFilmTuning.MAX_DENSITY_GAIN,
+                            resetValue = 1f,
+                            valueTextFormatter = { "${(it * 100f).roundToInt()}%" },
+                            onValueChange = {
+                                onAdjustmentStart()
+                                localSpectralFilmTuning = localSpectralFilmTuning.copy(cDensityGain = it)
+                            },
+                            onValueChangeFinished = ::commitSpectralFilmDensityGains
+                        )
+                        SliderSettingItem(
+                            title = stringResource(R.string.settings_spectral_film_m_density_gain),
+                            value = localSpectralFilmTuning.mDensityGain,
+                            valueRange = SpectralFilmTuning.MIN_DENSITY_GAIN..SpectralFilmTuning.MAX_DENSITY_GAIN,
+                            resetValue = 1f,
+                            valueTextFormatter = { "${(it * 100f).roundToInt()}%" },
+                            onValueChange = {
+                                onAdjustmentStart()
+                                localSpectralFilmTuning = localSpectralFilmTuning.copy(mDensityGain = it)
+                            },
+                            onValueChangeFinished = ::commitSpectralFilmDensityGains
+                        )
+                        SliderSettingItem(
+                            title = stringResource(R.string.settings_spectral_film_y_density_gain),
+                            value = localSpectralFilmTuning.yDensityGain,
+                            valueRange = SpectralFilmTuning.MIN_DENSITY_GAIN..SpectralFilmTuning.MAX_DENSITY_GAIN,
+                            resetValue = 1f,
+                            valueTextFormatter = { "${(it * 100f).roundToInt()}%" },
+                            onValueChange = {
+                                onAdjustmentStart()
+                                localSpectralFilmTuning = localSpectralFilmTuning.copy(yDensityGain = it)
+                            },
+                            onValueChangeFinished = ::commitSpectralFilmDensityGains
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            } else {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
         }
 
         RawDROModeSettingItem(
@@ -177,6 +243,45 @@ fun RawEditPanel(
                 onValueChangeFinished = onAdjustmentEnd
             )
         }
+    }
+}
+
+@Composable
+private fun RawSpectralFilmTuningHeader(
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_spectral_film_tuning),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_spectral_film_tuning_description),
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.75f),
+            modifier = Modifier
+                .size(22.dp)
+                .rotate(if (expanded) 90f else 0f)
+        )
     }
 }
 

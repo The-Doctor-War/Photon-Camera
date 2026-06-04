@@ -328,6 +328,7 @@ class RawDemosaicProcessor {
         spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
+        spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -356,6 +357,7 @@ class RawDemosaicProcessor {
                 spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
                 spectralFilmPrint = spectralFilmPrint,
+                spectralFilmTuning = spectralFilmTuning,
                 dngFile = dngFile,
                 onMetadata = onMetadata
             )?.sdrBitmap
@@ -392,6 +394,7 @@ class RawDemosaicProcessor {
         spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
+        spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
     ): Bitmap? = withContext(glDispatcher) {
         try {
             if (!isInitialized) {
@@ -424,7 +427,8 @@ class RawDemosaicProcessor {
                 dcpRenderPlan = dcpRenderPlan,
                 spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
-                spectralFilmPrint = spectralFilmPrint
+                spectralFilmPrint = spectralFilmPrint,
+                spectralFilmTuning = spectralFilmTuning
             )?.sdrBitmap
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to process RAW buffer", e)
@@ -452,6 +456,7 @@ class RawDemosaicProcessor {
         spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
+        spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -480,6 +485,7 @@ class RawDemosaicProcessor {
                 spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
                 spectralFilmPrint = spectralFilmPrint,
+                spectralFilmTuning = spectralFilmTuning,
                 dngFile = dngFile,
                 onMetadata = onMetadata,
                 includeHdrReference = true
@@ -518,6 +524,7 @@ class RawDemosaicProcessor {
         spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
+        spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
         dngFile: File? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
         includeHdrReference: Boolean = false
@@ -578,7 +585,7 @@ class RawDemosaicProcessor {
             }
         }
         val spectralFilmLut = if (spectralFilmEnabled && spectralFilmStock != null && spectralFilmPrint != null) {
-            SpectralFilmProfile.loadCombinedLut(context, spectralFilmStock, spectralFilmPrint)
+            SpectralFilmProfile.loadCombinedLut(context, spectralFilmStock, spectralFilmPrint, spectralFilmTuning)
         } else {
             null
         }

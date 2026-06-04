@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
@@ -58,6 +57,8 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.EffectParams
+import com.hinnka.mycamera.raw.SpectralFilmSelection
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
 import com.hinnka.mycamera.ui.camera.RecipeScope
@@ -191,6 +192,9 @@ fun GalleryEditScreen(
     val editRawSpectralFilmEnabled by viewModel.editRawSpectralFilmEnabled.collectAsState()
     val editRawSpectralFilmStock by viewModel.editRawSpectralFilmStock.collectAsState()
     val editRawSpectralFilmPrint by viewModel.editRawSpectralFilmPrint.collectAsState()
+    val editRawSpectralFilmCDensityGain by viewModel.editRawSpectralFilmCDensityGain.collectAsState()
+    val editRawSpectralFilmMDensityGain by viewModel.editRawSpectralFilmMDensityGain.collectAsState()
+    val editRawSpectralFilmYDensityGain by viewModel.editRawSpectralFilmYDensityGain.collectAsState()
     val availableDcps = viewModel.availableDcps
     
     val editComputationalAperture by viewModel.editComputationalAperture.collectAsState()
@@ -1080,7 +1084,16 @@ fun GalleryEditScreen(
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
                                         spectralFilmEnabled = editRawSpectralFilmEnabled,
-                                        spectralFilmStock = editRawSpectralFilmStock,
+                                        spectralFilmSelection = editRawSpectralFilmStock?.let { stock ->
+                                            SpectralFilmSelection(
+                                                id = stock,
+                                                tuning = SpectralFilmTuning(
+                                                    cDensityGain = editRawSpectralFilmCDensityGain,
+                                                    mDensityGain = editRawSpectralFilmMDensityGain,
+                                                    yDensityGain = editRawSpectralFilmYDensityGain
+                                                )
+                                            )
+                                        },
                                         spectralFilmPrint = editRawSpectralFilmPrint,
                                         onSelectDcp = { dcpId ->
                                             viewModel.saveRawDcpSelection(currentPhoto, dcpId) {
@@ -1130,8 +1143,8 @@ fun GalleryEditScreen(
                                                 requestRawPreviewRefresh()
                                             }
                                         },
-                                        onSpectralFilmStockChange = {
-                                            viewModel.saveRawSpectralFilmStock(currentPhoto, it) {
+                                        onSpectralFilmSelectionChange = {
+                                            viewModel.saveRawSpectralFilmSelection(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },

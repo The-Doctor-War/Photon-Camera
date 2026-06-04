@@ -17,6 +17,7 @@ import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.RawProcessingPreferences
+import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
@@ -177,6 +178,7 @@ data class UserPreferences(
     val rawSpectralFilmEnabled: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
+    val rawSpectralFilmTuningsByStock: Map<String, SpectralFilmTuning> = emptyMap(),
     val activeEffectParamsJson: String = "",
     val customPresetsJson: String = "",
     val activePresetId: String? = null,
@@ -237,6 +239,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BLACK_POINT_CORRECTION_KEY = floatPreferencesKey("raw_black_point_correction")
         private val RAW_WHITE_POINT_CORRECTION_KEY = floatPreferencesKey("raw_white_point_correction")
         private val RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY = booleanPreferencesKey("raw_auto_white_balance_estimate")
+        private val RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY = stringPreferencesKey("raw_spectral_film_tunings_by_stock")
         private val RAW_BLACK_LEVEL_MODES_KEY = stringPreferencesKey("raw_black_level_modes")
         private val RAW_CUSTOM_BLACK_LEVELS_KEY = stringPreferencesKey("raw_custom_black_levels")
         private val EXPORT_DNG_WITH_RAW_EXPORT_KEY = booleanPreferencesKey("export_dng_with_raw_export")
@@ -493,6 +496,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawSpectralFilmEnabled = preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] ?: false,
                 rawSpectralFilmStock = preferences[RAW_SPECTRAL_FILM_STOCK_KEY],
                 rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY],
+                rawSpectralFilmTuningsByStock = parseSpectralFilmTunings(preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY]),
                 activeEffectParamsJson = preferences[ACTIVE_EFFECT_PARAMS_JSON] ?: "",
                 customPresetsJson = preferences[CUSTOM_PRESETS_JSON] ?: "",
                 activePresetId = preferences[ACTIVE_PRESET_ID],
@@ -562,6 +566,34 @@ class UserPreferencesRepository(private val context: Context) {
 
     private fun serializeMapFloat(map: Map<String, Float>): String {
         return map.entries.joinToString(",") { "${it.key}:${it.value}" }
+    }
+
+    private fun parseSpectralFilmTunings(value: String?): Map<String, SpectralFilmTuning> {
+        if (value.isNullOrEmpty()) return emptyMap()
+        return value.split(",")
+            .mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size == 4) {
+                    val c = parts[1].toFloatOrNull()
+                    val m = parts[2].toFloatOrNull()
+                    val y = parts[3].toFloatOrNull()
+                    if (c != null && m != null && y != null) {
+                        parts[0] to SpectralFilmTuning(c, m, y).normalized()
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            }
+            .toMap()
+    }
+
+    private fun serializeSpectralFilmTunings(map: Map<String, SpectralFilmTuning>): String {
+        return map.entries.joinToString(",") { (stock, tuning) ->
+            val t = tuning.normalized()
+            "$stock:${t.cDensityGain}:${t.mDensityGain}:${t.yDensityGain}"
+        }
     }
 
     private fun parseLensIds(value: String?): List<String> {
@@ -1469,6 +1501,14 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 preferences.remove(RAW_SPECTRAL_FILM_PRINT_KEY)
             }
+        }
+    }
+
+    suspend fun saveRawSpectralFilmTuning(filmStock: String, tuning: SpectralFilmTuning) {
+        context.dataStore.edit { preferences ->
+            val tunings = parseSpectralFilmTunings(preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY]).toMutableMap()
+            tunings[filmStock] = tuning.normalized()
+            preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY] = serializeSpectralFilmTunings(tunings)
         }
     }
 

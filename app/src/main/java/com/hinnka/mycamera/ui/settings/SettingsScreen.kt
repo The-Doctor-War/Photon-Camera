@@ -109,6 +109,7 @@ import com.hinnka.mycamera.frame.FrameInfo
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
+import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
 import com.hinnka.mycamera.ui.camera.autoRotate
@@ -253,6 +254,7 @@ fun SettingsScreen(
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
     val rawSpectralFilmEnabled by viewModel.rawSpectralFilmEnabled.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
+    val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
     val availableDcps = viewModel.availableDcps
     val availableLuts = viewModel.availableLutList
@@ -1259,7 +1261,7 @@ fun SettingsScreen(
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
                         spectralFilmEnabled = rawSpectralFilmEnabled,
-                        spectralFilmStock = rawSpectralFilmStock ?: "kodak_portra_400",
+                        spectralFilmSelection = rawSpectralFilmSelection ?: SpectralFilmSelection(rawSpectralFilmStock ?: "kodak_portra_400"),
                         spectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
                         onSelectDcp = { viewModel.setRawDcpId(it) },
                         onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
@@ -1280,12 +1282,12 @@ fun SettingsScreen(
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
                         onSpectralFilmEnabledChange = { enabled ->
                             if (enabled) {
-                                if (rawSpectralFilmStock == null) viewModel.setRawSpectralFilmStock("kodak_portra_400")
+                                if (rawSpectralFilmSelection == null) viewModel.setRawSpectralFilmSelection(SpectralFilmSelection("kodak_portra_400"))
                                 if (rawSpectralFilmPrint == null) viewModel.setRawSpectralFilmPrint("kodak_portra_endura")
                             }
                             viewModel.setRawSpectralFilmEnabled(enabled)
                         },
-                        onSpectralFilmStockChange = { viewModel.setRawSpectralFilmStock(it) },
+                        onSpectralFilmSelectionChange = { viewModel.setRawSpectralFilmSelection(it) },
                         onSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
                         onAdjustmentStart = { isRawSliderAdjusting = true },
                         onAdjustmentEnd = { commitRawSliderValues() },
