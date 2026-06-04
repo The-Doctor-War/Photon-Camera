@@ -12,6 +12,7 @@ object DenoiseProfileShaders {
     const val REDUCE_FIRST_LOCAL_Y = 16
     const val REDUCE_SECOND_LOCAL_X = 256
     const val REDUCE_SIZE = 64
+    const val FLAT_AREA_BOOST = 1.2f
 
     private const val COMMON = """
         precision highp float;
@@ -151,8 +152,28 @@ object DenoiseProfileShaders {
         uniform vec4 uThreshold;
         uniform vec4 uBoost;
 
+        const float FLAT_AREA_BOOST = $FLAT_AREA_BOOST;
+
         vec4 copySign(vec4 x, vec4 y) {
             return abs(x) * sign(y);
+        }
+
+        float luminanceDistance(vec4 a, vec4 b) {
+            vec3 diff = a.rgb - b.rgb;
+            return sqrt(dot(diff, diff));
+        }
+
+        float flatAreaWeight(ivec2 coord, vec4 center, vec4 threshold) {
+            vec4 left = readPixel(uCoarse, coord + ivec2(-1, 0), uImageSize);
+            vec4 right = readPixel(uCoarse, coord + ivec2(1, 0), uImageSize);
+            vec4 up = readPixel(uCoarse, coord + ivec2(0, -1), uImageSize);
+            vec4 down = readPixel(uCoarse, coord + ivec2(0, 1), uImageSize);
+            float localGradient = max(
+                max(luminanceDistance(center, left), luminanceDistance(center, right)),
+                max(luminanceDistance(center, up), luminanceDistance(center, down))
+            );
+            float edgeThreshold = max(1e-5, threshold.x);
+            return 1.0 - smoothstep(edgeThreshold * 0.5, edgeThreshold * 2.0, localGradient);
         }
 
         void main() {
@@ -161,7 +182,9 @@ object DenoiseProfileShaders {
 
             vec4 c = readPixel(uCoarse, coord, uImageSize);
             vec4 d = readPixel(uDetail, coord, uImageSize);
-            vec4 amount = copySign(max(vec4(0.0), abs(d) - uThreshold), d);
+            float flatWeight = flatAreaWeight(coord, c, uThreshold);
+            vec4 localThreshold = uThreshold * (1.0 + FLAT_AREA_BOOST * flatWeight);
+            vec4 amount = copySign(max(vec4(0.0), abs(d) - localThreshold), d);
             vec4 sum = c + uBoost * amount;
             sum.a = c.a;
             imageStore(uOutput, coord, sum);
