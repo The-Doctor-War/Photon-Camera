@@ -143,6 +143,12 @@ class RawDemosaicProcessor {
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
         private const val DEFAULT_RAW_CHROMA_DENOISE_VALUE = 0.4f
+        private const val RCD_RAW_TEXTURE_UNIT = 0
+        private const val RCD_LENS_SHADING_TEXTURE_UNIT = 1
+        private const val RCD_OUTPUT_IMAGE_UNIT = 0
+        private const val RCD_PQ_WRITE_BINDING = 5
+        private const val RCD_PQ_READ_BINDING = 4
+        private const val RCD_VH_DIR_BINDING = 4
 
         init {
             // 加载 JNI 库
@@ -649,7 +655,9 @@ class RawDemosaicProcessor {
                 for (i in 0 until 9) {
                     GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, ssboIds[i])
                     GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, sizes[i], null, GLES31.GL_DYNAMIC_DRAW)
-                    GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, ssboIds[i])
+                    if (i < 8) {
+                        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, ssboIds[i])
+                    }
                 }
                 GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
 
@@ -660,9 +668,12 @@ class RawDemosaicProcessor {
                 }
 
                 GLES31.glUseProgram(rcdPopulateProgram)
-                GLES31.glActiveTexture(GLES31.GL_TEXTURE10)
+                GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_RAW_TEXTURE_UNIT)
                 GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rawTextureId)
-                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uRawTexture"), 10) // 对应 RcdShaders.POPULATE 中的 binding = 10
+                GLES31.glUniform1i(
+                    GLES31.glGetUniformLocation(rcdPopulateProgram, "uRawTexture"),
+                    RCD_RAW_TEXTURE_UNIT
+                )
                 bindLensShadingForRcdPopulate(actualMetadata)
                 GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uImageSize"), actualWidth, actualHeight)
                 GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uCfaPattern"), actualMetadata.cfaPattern)
@@ -718,6 +729,7 @@ class RawDemosaicProcessor {
                 checkGlError("RCD Step 4_0")
 
                 // 2.5 Step 4_1 (对角线方向强弱度选择)
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_PQ_WRITE_BINDING, ssboIds[8])
                 GLES31.glUseProgram(rcdStep41Program)
                 GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep41Program, "uImageSize"), actualWidth, actualHeight)
                 GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep41Program, "uCfaPattern"), actualMetadata.cfaPattern)
@@ -726,6 +738,7 @@ class RawDemosaicProcessor {
                 checkGlError("RCD Step 4_1")
 
                 // 2.6 Step 4_2 (红蓝通道在红蓝位置色差引导插值)
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_PQ_READ_BINDING, ssboIds[8])
                 GLES31.glUseProgram(rcdStep42Program)
                 GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep42Program, "uImageSize"), actualWidth, actualHeight)
                 GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep42Program, "uCfaPattern"), actualMetadata.cfaPattern)
@@ -734,6 +747,7 @@ class RawDemosaicProcessor {
                 checkGlError("RCD Step 4_2")
 
                 // 2.7 Step 4_3 (红蓝通道在绿色位置插值)
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_VH_DIR_BINDING, ssboIds[4])
                 GLES31.glUseProgram(rcdStep43Program)
                 GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep43Program, "uImageSize"), actualWidth, actualHeight)
                 GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep43Program, "uCfaPattern"), actualMetadata.cfaPattern)
@@ -745,20 +759,35 @@ class RawDemosaicProcessor {
                 GLES31.glUseProgram(rcdWriteOutputProgram)
                 GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uImageSize"), actualWidth, actualHeight)
                 GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), 4)
-                GLES31.glBindImageTexture(11, demosaicTextureId, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES31.GL_RGBA16F) // 对应 RcdShaders.WRITE_OUTPUT 中的 binding = 11
+                GLES31.glBindImageTexture(
+                    RCD_OUTPUT_IMAGE_UNIT,
+                    demosaicTextureId,
+                    0,
+                    false,
+                    0,
+                    GLES31.GL_WRITE_ONLY,
+                    GLES31.GL_RGBA16F
+                )
                 GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
                 GLES31.glMemoryBarrier(GLES31.GL_ALL_BARRIER_BITS)
                 checkGlError("RCD Write Output")
 
-                // 解绑 Image Texture 11，避免后续与常规纹理采样单元（glBindTexture）发生绑定冲突
-                GLES31.glBindImageTexture(11, 0, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES31.GL_RGBA16F)
+                GLES31.glBindImageTexture(
+                    RCD_OUTPUT_IMAGE_UNIT,
+                    0,
+                    0,
+                    false,
+                    0,
+                    GLES31.GL_WRITE_ONLY,
+                    GLES31.GL_RGBA16F
+                )
 
                 // 强制等待 GPU 彻底完成所有之前的渲染和计算指令，确保 SSBO 被 GPU 完全读取完毕后再进行安全删除
                 GLES30.glFinish()
 
                 // 清理 SSBO
                 GLES31.glDeleteBuffers(9, ssboIds, 0)
-                for (i in 0 until 9) {
+                for (i in 0 until 8) {
                     GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
                 }
 
@@ -1082,6 +1111,7 @@ class RawDemosaicProcessor {
             GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxTexSizeArr, 0)
             maxTextureSize = maxTexSizeArr[0]
             PLog.d(TAG, "GL_MAX_TEXTURE_SIZE = $maxTextureSize")
+            logGlResourceLimits()
 
             isInitialized = true
             PLog.d(TAG, "RawDemosaicProcessor initialized")
@@ -2076,14 +2106,17 @@ class RawDemosaicProcessor {
 
     private fun bindLensShadingForRcdPopulate(metadata: RawMetadata) {
         val enabled = hasValidLensShadingMap(metadata)
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE11)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_LENS_SHADING_TEXTURE_UNIT)
         if (enabled) {
             uploadLensShadingTexture(metadata)
             GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lensShadingTextureId)
         } else {
             GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, 0)
         }
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingMap"), 11)
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingMap"),
+            RCD_LENS_SHADING_TEXTURE_UNIT
+        )
         GLES31.glUniform1i(
             GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingEnabled"),
             if (enabled) 1 else 0
@@ -2105,6 +2138,23 @@ class RawDemosaicProcessor {
             grid?.getOrElse(1) { 0f } ?: 0f,
             grid?.getOrElse(2) { 1f } ?: 1f,
             grid?.getOrElse(3) { 1f } ?: 1f
+        )
+    }
+
+    private fun logGlResourceLimits() {
+        val value = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_IMAGE_UNITS, value, 0)
+        val textureImageUnits = value[0]
+        GLES30.glGetIntegerv(GLES31.GL_MAX_IMAGE_UNITS, value, 0)
+        val imageUnits = value[0]
+        GLES30.glGetIntegerv(GLES31.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, value, 0)
+        val ssboBindings = value[0]
+        GLES30.glGetIntegerv(GLES31.GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS, value, 0)
+        val computeSsboBlocks = value[0]
+        PLog.d(
+            TAG,
+            "GL limits: textureImageUnits=$textureImageUnits imageUnits=$imageUnits " +
+                "ssboBindings=$ssboBindings computeSsboBlocks=$computeSsboBlocks"
         )
     }
 

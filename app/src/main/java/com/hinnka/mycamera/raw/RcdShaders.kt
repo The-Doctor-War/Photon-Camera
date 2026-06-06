@@ -18,8 +18,8 @@ object RcdShaders {
         precision highp int;
         layout (local_size_x = 16, local_size_y = 16) in;
 
-        layout (binding = 10) uniform highp usampler2D uRawTexture; // 单通道 R16UI 原始图像，移至 binding = 10 避开 SSBO
-        layout (binding = 11) uniform highp sampler2D uLensShadingMap; // R, Gr, Gb, B 增益图
+        layout (binding = 0) uniform highp usampler2D uRawTexture; // 单通道 R16UI 原始图像
+        layout (binding = 1) uniform highp sampler2D uLensShadingMap; // R, Gr, Gb, B 增益图
 
         layout(std430, binding = 0) buffer CFA_Buf    { float cfa[]; };
         layout(std430, binding = 1) buffer RGB0_Buf   { float rgb0[]; }; // R
@@ -367,7 +367,7 @@ object RcdShaders {
 
         layout(std430, binding = 6) buffer P_Diff_Buf { float p_diff[]; };
         layout(std430, binding = 7) buffer Q_Diff_Buf { float q_diff[]; };
-        layout(std430, binding = 8) buffer PQ_Dir_Buf { float PQ_dir[]; };
+        layout(std430, binding = 5) buffer PQ_Dir_Buf { float PQ_dir[]; };
 
         uniform ivec2 uImageSize;
         uniform int uCfaPattern;
@@ -422,7 +422,7 @@ object RcdShaders {
         layout(std430, binding = 1) buffer RGB0_Buf   { float rgb0[]; }; // R
         layout(std430, binding = 2) buffer RGB1_Buf   { float rgb1[]; }; // G
         layout(std430, binding = 3) buffer RGB2_Buf   { float rgb2[]; }; // B
-        layout(std430, binding = 8) buffer PQ_Dir_Buf { float PQ_dir[]; };
+        layout(std430, binding = 4) buffer PQ_Dir_Buf { float PQ_dir[]; };
 
         uniform ivec2 uImageSize;
         uniform int uCfaPattern;
@@ -627,7 +627,7 @@ object RcdShaders {
         layout(std430, binding = 2) buffer RGB1_Buf   { float rgb1[]; }; // G
         layout(std430, binding = 3) buffer RGB2_Buf   { float rgb2[]; }; // B
 
-        layout (rgba16f, binding = 11) writeonly uniform highp image2D uOutputImage;
+        layout (rgba16f, binding = 0) writeonly uniform highp image2D uOutputImage;
 
         uniform ivec2 uImageSize;
         uniform int uBorder;
