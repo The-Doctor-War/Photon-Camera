@@ -60,8 +60,6 @@ data class CameraPreset(
                 lutId = "standard",
                 colorRecipe = ColorRecipeParams.DEFAULT.copy(
                     exposure = 0.2f,
-                    contrast = 0.95f,
-                    fade = 0.05f
                 ),
                 effects = EffectParams.DEFAULT,
                 frameId = "polaroid",
@@ -78,19 +76,13 @@ data class CameraPreset(
                 lutId = "leica_m9",
                 colorRecipe = ColorRecipeParams.DEFAULT.copy(
                     exposure = -0.3f,
-                    contrast = 1.05f,
-                    saturation = 0.88f,
+                    saturation = 0.9f,
                     color = 0.12f,
-                    redChroma = 0.08f,
-                    redLightness = -0.03f,
-                    orangeChroma = 0.06f,
-                    yellowHue = -0.03f,
-                    yellowChroma = 0.05f,
-                    greenChroma = -0.04f,
-                    cyanHue = -0.04f,
-                    blueChroma = 0.06f,
                     primaryRedSaturation = 0.06f,
                     primaryBlueSaturation = 0.04f,
+                    masterCurvePoints = floatArrayOf(
+                        0.0f, 0.0f, 0.25f, 0.24f, 0.66f, 0.74f, 1.0f, 1.0f
+                    )
                 ),
                 effects = EffectParams.DEFAULT.copy(
                     vignette = -0.2f,
@@ -106,7 +98,7 @@ data class CameraPreset(
             CameraPreset(
                 id = "builtin_cinematic",
                 name = "builtin_cinematic",
-                lutId = null,
+                lutId = "ricoh_yellow",
                 colorRecipe = ColorRecipeParams.DEFAULT.copy(
                     shadows = -0.08f,
                     highlights = 0.05f
@@ -116,10 +108,8 @@ data class CameraPreset(
                 aspectRatio = AspectRatio.XPAN.name,
                 useRaw = true,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = true,
-                rawSpectralFilmStock = "kodak_vision3_250d",
-                rawSpectralFilmPrint = "kodak_2383",
-                rawDROMode = "OFF",
+                rawSpectralFilmEnabled = false,
+                rawDROMode = "DR100",
                 isBuiltIn = true
             ),
             CameraPreset(
