@@ -23,13 +23,10 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,21 +35,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.collectAsState
@@ -74,10 +64,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.compositionContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -107,7 +94,7 @@ import com.hinnka.mycamera.livephoto.GoogleLivePhotoCreator
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.livephoto.VivoLivePhotoCreator
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
-import com.hinnka.mycamera.lut.groupLutsForDisplay
+import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -665,9 +652,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 windowParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             windowParams.alpha = 1f
         }
-        if (showFilterPicker) {
-            windowParams.height = (getOverlayDisplayBounds().height() * 0.6f).toInt()
-        }
     }
 
     private fun getOverlayDisplayBounds(): Rect {
@@ -801,173 +785,52 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                 }
                             }
                             val currentLutId by currentLutIdFlow.collectAsState(initial = null)
-                            val listState = rememberLazyListState()
-                            val builtInText = stringResource(R.string.built_in)
-                            val uncategorizedText = stringResource(R.string.uncategorized)
-                            val groupedLuts = remember(
-                                availableLuts,
-                                categoryOrder,
-                                builtInText,
-                                uncategorizedText
-                            ) {
-                                groupLutsForDisplay(
-                                    luts = availableLuts,
-                                    categoryOrder = categoryOrder,
-                                    builtInText = builtInText,
-                                    uncategorizedText = uncategorizedText
-                                )
-                            }
-                            val selectedIndex = remember(groupedLuts, currentLutId) {
-                                var runningIndex = 0
-                                groupedLuts.forEach { (_, luts) ->
-                                    runningIndex += 1
-                                    val localIndex = luts.indexOfFirst { it.id == currentLutId }
-                                    if (localIndex >= 0) {
-                                        return@remember runningIndex + localIndex
-                                    }
-                                    runningIndex += luts.size
-                                }
-                                -1
-                            }
-
-                            LaunchedEffect(showFilterPicker, selectedIndex) {
-                                if (!showFilterPicker || selectedIndex < 0) return@LaunchedEffect
-                                listState.scrollToItem((selectedIndex - 1).coerceAtLeast(0))
-                            }
-                            Column(
+                            Box(
                                 modifier = Modifier
-                                    .heightIn(max = 450.dp)
-                                    .width(220.dp)
+                                    .heightIn(max = 180.dp)
+                                    .width(320.dp)
                                     .padding(8.dp)
                             ) {
-                                // Header
-                                Row(
+                                fun closeFilterPicker() {
+                                    showFilterPicker = false
+                                    updateWindowParams(false)
+                                    composeView?.let { windowManager.updateViewLayout(it, windowParams) }
+                                }
+
+                                LutSelector(
+                                    availableLuts = availableLuts,
+                                    currentLutId = currentLutId,
+                                    thumbnail = processingInfo?.thumbnail?.takeIf { !it.isRecycled },
+                                    onLutSelected = { lutId ->
+                                        scope.launch {
+                                            userPreferencesRepository.saveLutConfig(lutId)
+                                            syncScreenCaptureRenderConfig(lutId)
+                                            closeFilterPicker()
+                                        }
+                                    },
+                                    onEditClick = { closeFilterPicker() },
+                                    categoryOrder = categoryOrder,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(bottom = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(top = 32.dp)
+                                )
+
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(28.dp)
+                                        .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color(0xFFFF6B35),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = stringResource(R.string.filter_management_title),
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp
-                                        ),
-                                        modifier = Modifier.weight(1f)
-                                    )
                                     IconButton(
-                                        onClick = {
-                                            showFilterPicker = false
-                                            updateWindowParams(false)
-                                            composeView?.let { windowManager.updateViewLayout(it, windowParams) }
-                                        },
-                                        modifier = Modifier.size(24.dp)
+                                        onClick = { closeFilterPicker() },
+                                        modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Close",
-                                            tint = Color.White.copy(alpha = 0.5f),
+                                            contentDescription = stringResource(R.string.close),
+                                            tint = Color.White.copy(alpha = 0.72f),
                                             modifier = Modifier.size(16.dp)
                                         )
-                                    }
-                                }
-
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(bottom = 8.dp),
-                                    color = Color.White.copy(alpha = 0.1f)
-                                )
-
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier
-                                        .weight(1f, fill = false)
-                                        .fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    groupedLuts.forEach { (groupTitle, luts) ->
-                                        stickyHeader(key = "header_$groupTitle") { _ ->
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(Color(0xCC101010), RoundedCornerShape(8.dp))
-                                                    .padding(vertical = 4.dp),
-                                            ) {
-                                                Text(
-                                                    text = groupTitle,
-                                                    color = Color.White.copy(alpha = 0.55f),
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.Medium,
-                                                        fontSize = 10.sp
-                                                    ),
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                )
-                                            }
-                                        }
-                                        items(
-                                            items = luts,
-                                            key = { "${groupTitle}_${it.id}" }
-                                        ) { lut ->
-                                                val isSelected = lut.id == currentLutId
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(12.dp))
-                                                        .background(
-                                                            if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.15f)
-                                                            else Color.White.copy(alpha = 0.05f)
-                                                        )
-                                                        .border(
-                                                            width = 1.dp,
-                                                            color = if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.5f)
-                                                            else Color.Transparent,
-                                                            shape = RoundedCornerShape(12.dp)
-                                                        )
-                                                        .clickable {
-                                                            scope.launch {
-                                                                userPreferencesRepository.saveLutConfig(lut.id)
-                                                                syncScreenCaptureRenderConfig(lut.id)
-                                                                showFilterPicker = false
-                                                                updateWindowParams(false)
-                                                                composeView?.let {
-                                                                    windowManager.updateViewLayout(
-                                                                        it,
-                                                                        windowParams
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        text = lut.getName(),
-                                                        color = if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.9f),
-                                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                            fontSize = 14.sp
-                                                        ),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        modifier = Modifier.weight(1f).basicMarquee()
-                                                    )
-                                                    if (isSelected) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            tint = Color(0xFFFF6B35),
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
-                                                    }
-                                                }
-                                        }
                                     }
                                 }
                             }
