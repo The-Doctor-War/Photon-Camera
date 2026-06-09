@@ -10,6 +10,8 @@ import com.google.gson.Gson
 data class EffectParams(
     val vignette: Float = 0f,               // 暗角 (-1.0 ~ 1.0)
     val filmGrain: Float = 0f,             // 胶片颗粒 (0.0 ~ 1.0)
+    val bloom: Float = 0f,                 // Bevy Bloom 泛光 (0.0 ~ 1.0)
+    val softLight: Float = 0f,             // 柔光扩散 (0.0 ~ 1.0)
     val hdf: Float = 0f,                   // 高光扩散 HDF (0.0 ~ 1.0)
     val halation: Float = 0f,              // 边缘红晕 Halation (0.0 ~ 1.0)
     val chromaticAberration: Float = 0f,   // 色散 (0.0 ~ 1.0)
@@ -22,7 +24,8 @@ data class EffectParams(
     fun isDefault(): Boolean {
         return vignette == 0f &&
                 filmGrain == 0f &&
-                hdf == 0f &&
+                bloom == 0f &&
+                softLight == 0f &&
                 halation == 0f &&
                 chromaticAberration == 0f &&
                 noise == 0f &&
@@ -37,7 +40,9 @@ data class EffectParams(
         return recipe.copy(
             vignette = vignette,
             filmGrain = filmGrain,
-            halation = hdf,            // 底层 halation 属性对应 HDF
+            bloom = bloom,
+            softLight = softLight,
+            halation = 0f,             // 旧 HDF 已移除 UI 入口，强制归零以避免旧值继续生效
             redHalation = halation,     // 底层 redHalation 属性对应 Halation
             chromaticAberration = chromaticAberration,
             noise = noise,
@@ -45,7 +50,7 @@ data class EffectParams(
         )
     }
 
-    fun toJson(): String = gson.toJson(this)
+    fun toJson(): String = gson.toJson(copy(hdf = 0f))
 
     companion object {
         private val gson = Gson()
@@ -53,10 +58,24 @@ data class EffectParams(
 
         fun fromJson(json: String): EffectParams {
             return try {
-                gson.fromJson(json, EffectParams::class.java) ?: DEFAULT
+                gson.fromJson(json, EffectParams::class.java)?.copy(hdf = 0f) ?: DEFAULT
             } catch (e: Exception) {
                 DEFAULT
             }
         }
     }
+}
+
+fun ColorRecipeParams.toEffectParams(): EffectParams {
+    return EffectParams(
+        vignette = vignette,
+        filmGrain = filmGrain,
+        bloom = bloom,
+        softLight = softLight,
+        hdf = 0f,
+        halation = redHalation,
+        chromaticAberration = chromaticAberration,
+        noise = noise,
+        lowRes = lowRes
+    )
 }

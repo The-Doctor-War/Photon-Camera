@@ -164,6 +164,8 @@
     <string name="recipe_param_film_grain">Grão</string>
     <string name="recipe_param_vignette">Vinheta</string>
     <string name="recipe_param_bleach_bypass">Bleach Bypass</string>
+    <string name="recipe_param_bloom">Bloom</string>
+    <string name="recipe_param_soft_light">Luz suave</string>
     <string name="recipe_param_halation">Halação</string>
     <string name="recipe_param_lut_intensity">LUT</string>
     

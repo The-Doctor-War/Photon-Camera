@@ -2738,7 +2738,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     suspend fun applyLut(bitmap: Bitmap): Bitmap = withContext(Dispatchers.IO) {
         currentLutConfig?.let { lut ->
-            val params = contentRepository.lutManager.loadColorRecipeParams(currentLutId.value)
+            val params = getMergedRecipeParams(contentRepository.lutManager.loadColorRecipeParams(currentLutId.value))
             contentRepository.imageProcessor.applyLut(
                 bitmap = bitmap,
                 isHlgInput = shouldTreatPreviewAsHlgInput(state.value),
@@ -3736,7 +3736,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val metadata = MediaMetadata(
                 lutId = currentLutId.value,
                 frameId = currentFrameId,
-                colorRecipeParams = currentRecipeParams.value,
+                colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
                 baselineLutId = baselineMetadata?.second,
                 baselineColorRecipeParams = baselineMetadata?.third,
@@ -3885,7 +3885,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
                 frameId = frameIdToSave,
-                colorRecipeParams = currentRecipeParams.value,
+                colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
                 baselineLutId = baselineMetadata?.second,
                 baselineColorRecipeParams = baselineMetadata?.third,
@@ -4046,7 +4046,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val metadata = MediaMetadata(
             lutId = lutIdToSave,
             frameId = frameIdToSave,
-            colorRecipeParams = currentRecipeParams.value,
+            colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,
             baselineLutId = baselineMetadata?.second,
             baselineColorRecipeParams = baselineMetadata?.third,

@@ -32,6 +32,7 @@ import com.hinnka.mycamera.lut.PhotoTransformation
 import com.hinnka.mycamera.lut.exportVideoWithEffects
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmSelection
@@ -1729,6 +1730,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun setPhotoRecipeParams(params: ColorRecipeParams?) {
         editPhotoRecipeParams.value = params
+    }
+
+    fun setPhotoEffectParams(params: EffectParams, baseRecipeOverride: ColorRecipeParams? = null) {
+        val baseRecipe = baseRecipeOverride ?: editPhotoRecipeParams.value ?: editLutRecipeParams.value
+        editPhotoRecipeParams.value = params.applyTo(baseRecipe)
     }
 
     /**

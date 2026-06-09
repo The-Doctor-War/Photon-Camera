@@ -163,6 +163,8 @@
     <string name="recipe_param_film_grain">Körnung</string>
     <string name="recipe_param_vignette">Vignettierung</string>
     <string name="recipe_param_bleach_bypass">Bleach Bypass</string>
+    <string name="recipe_param_bloom">Bloom</string>
+    <string name="recipe_param_soft_light">Weiches Licht</string>
     <string name="recipe_param_halation">Halation</string>
     <string name="recipe_param_lut_intensity">LUT</string>
     

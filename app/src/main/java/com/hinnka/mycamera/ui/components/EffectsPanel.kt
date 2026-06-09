@@ -39,7 +39,8 @@ enum class EffectType(
 ) {
     FILM_GRAIN(RecipeParam.FILM_GRAIN, Color(0xFF9E9E9E), 0f, 1f, 0f),
     VIGNETTE(RecipeParam.VIGNETTE, Color(0xFF795548), -1f, 1f, 0f),
-    HDF(RecipeParam.HDF, Color(0xFFFFC107), 0f, 1f, 0f),
+    BLOOM(RecipeParam.BLOOM, Color(0xFFFFD54F), 0f, 1f, 0f),
+    SOFT_LIGHT(RecipeParam.SOFT_LIGHT, Color(0xFFE8E1D4), 0f, 1f, 0f),
     HALATION(RecipeParam.HALATION, Color(0xFFFF7043), 0f, 1f, 0f),
     CHROMATIC_ABERRATION(RecipeParam.CHROMATIC_ABERRATION, Color(0xFFAB47BC), 0f, 1f, 0f),
     NOISE(RecipeParam.NOISE, Color(0xFFA1887F), 0f, 1f, 0f),
@@ -49,7 +50,8 @@ enum class EffectType(
         return when (this) {
             FILM_GRAIN -> params.filmGrain
             VIGNETTE -> params.vignette
-            HDF -> params.hdf
+            BLOOM -> params.bloom
+            SOFT_LIGHT -> params.softLight
             HALATION -> params.halation
             CHROMATIC_ABERRATION -> params.chromaticAberration
             NOISE -> params.noise
@@ -62,7 +64,8 @@ enum class EffectType(
         return when (this) {
             FILM_GRAIN -> params.copy(filmGrain = clamped)
             VIGNETTE -> params.copy(vignette = clamped)
-            HDF -> params.copy(hdf = clamped)
+            BLOOM -> params.copy(bloom = clamped)
+            SOFT_LIGHT -> params.copy(softLight = clamped)
             HALATION -> params.copy(halation = clamped)
             CHROMATIC_ABERRATION -> params.copy(chromaticAberration = clamped)
             NOISE -> params.copy(noise = clamped)

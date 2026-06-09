@@ -56,6 +56,8 @@ fun ColorRecipePanel(
     val isBakeable: (RecipeParam) -> Boolean = { param ->
         param != RecipeParam.VIGNETTE &&
         param != RecipeParam.FILM_GRAIN &&
+        param != RecipeParam.BLOOM &&
+        param != RecipeParam.SOFT_LIGHT &&
         param != RecipeParam.HDF &&
         param != RecipeParam.HALATION &&
         param != RecipeParam.CHROMATIC_ABERRATION &&
@@ -103,7 +105,6 @@ fun ColorRecipePanel(
             RecipeParam.BLEACH_BYPASS,
         ),
         listOf(            // 7 lens
-            RecipeParam.HDF,
             RecipeParam.HALATION,
             RecipeParam.CHROMATIC_ABERRATION,
             RecipeParam.NOISE,
@@ -691,6 +692,8 @@ private fun formatParamValue(param: RecipeParam, value: Float): String {
         RecipeParam.NOISE,
         RecipeParam.LOW_RES,
         RecipeParam.BLEACH_BYPASS,
+        RecipeParam.BLOOM,
+        RecipeParam.SOFT_LIGHT,
         RecipeParam.HDF,
         RecipeParam.HALATION,
         RecipeParam.CHROMATIC_ABERRATION -> String.format("%.2f", value)
@@ -753,6 +756,8 @@ private fun getParamColor(param: RecipeParam): Color {
         RecipeParam.NOISE -> Color(0xFFA1887F) // 浅棕色
         RecipeParam.VIGNETTE -> Color(0xFF795548) // 棕色
         RecipeParam.BLEACH_BYPASS -> Color(0xFF00BCD4) // 青色
+        RecipeParam.BLOOM -> Color(0xFFFFD54F) // 泛光
+        RecipeParam.SOFT_LIGHT -> Color(0xFFE8E1D4) // 柔光
         RecipeParam.HDF -> Color(0xFFFFC107) // 暖黄色（高光扩散）
         RecipeParam.HALATION -> Color(0xFFFF7043) // 暖橙色（胶片光晕）
         RecipeParam.CHROMATIC_ABERRATION -> Color(0xFFAB47BC) // 紫色（色散）

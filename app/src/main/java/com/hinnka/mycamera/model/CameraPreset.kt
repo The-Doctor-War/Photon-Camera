@@ -33,7 +33,14 @@ data class CameraPreset(
     // 是否为内置预设
     val isBuiltIn: Boolean = false
 ) {
-    fun toJson(): String = gson.toJson(this)
+    fun toJson(): String = gson.toJson(withoutLegacyHdf())
+
+    fun withoutLegacyHdf(): CameraPreset {
+        return copy(
+            colorRecipe = colorRecipe.copy(halation = 0f),
+            effects = effects.copy(hdf = 0f)
+        )
+    }
 
     companion object {
         private val gson = Gson()
@@ -123,7 +130,6 @@ data class CameraPreset(
                 effects = EffectParams.DEFAULT.copy(
                     vignette = -0.25f,
                     filmGrain = 0.25f,
-                    hdf = 0.25f,
                     halation = 0.25f,
                 ),
                 frameId = "time",
@@ -154,7 +160,7 @@ data class CameraPreset(
 
         fun fromJson(json: String): CameraPreset? {
             return try {
-                gson.fromJson(json, CameraPreset::class.java)
+                gson.fromJson(json, CameraPreset::class.java)?.withoutLegacyHdf()
             } catch (e: Exception) {
                 null
             }
@@ -164,12 +170,12 @@ data class CameraPreset(
             if (json.isEmpty()) return emptyList()
             return try {
                 val type = object : TypeToken<List<CameraPreset>>() {}.type
-                gson.fromJson(json, type) ?: emptyList()
+                (gson.fromJson(json, type) ?: emptyList<CameraPreset>()).map { it.withoutLegacyHdf() }
             } catch (e: Exception) {
                 emptyList()
             }
         }
 
-        fun listToJson(list: List<CameraPreset>): String = gson.toJson(list)
+        fun listToJson(list: List<CameraPreset>): String = gson.toJson(list.map { it.withoutLegacyHdf() })
     }
 }

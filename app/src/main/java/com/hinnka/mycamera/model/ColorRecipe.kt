@@ -29,6 +29,8 @@ data class ColorRecipeParams(
     val filmGrain: Float = 0f,      // 0.0 ~ 1.0 (颗粒强度，0为无颗粒)
     val vignette: Float = 0f,       // -1.0 ~ +1.0 (晕影，负值暗角，正值亮角)
     val bleachBypass: Float = 0f,   // 0.0 ~ 1.0 (留银冲洗强度，0为无效果)
+    val bloom: Float = 0f,          // 0.0 ~ 1.0 (Bevy Bloom 泛光强度，0为无效果)
+    val softLight: Float = 0f,      // 0.0 ~ 1.0 (柔光扩散强度，0为无效果)
     val halation: Float = 0f,       // 0.0 ~ 1.0 (高光扩散强度，0为无效果，模拟 GR3 HDF)
     val redHalation: Float = 0f,    // 0.0 ~ 1.0 (胶片暖红色边缘光晕强度，0为无效果)
     val chromaticAberration: Float = 0f, // 0.0 ~ 1.0 (色散/边缘溢色强度，0为无效果)
@@ -100,7 +102,8 @@ data class ColorRecipeParams(
                 filmGrain == 0f &&
                 vignette == 0f &&
                 bleachBypass == 0f &&
-                halation == 0f &&
+                bloom == 0f &&
+                softLight == 0f &&
                 redHalation == 0f &&
                 chromaticAberration == 0f &&
                 noise == 0f &&
@@ -170,7 +173,8 @@ data class ColorRecipeParams(
                 filmGrain == other.filmGrain &&
                 vignette == other.vignette &&
                 bleachBypass == other.bleachBypass &&
-                halation == other.halation &&
+                bloom == other.bloom &&
+                softLight == other.softLight &&
                 redHalation == other.redHalation &&
                 chromaticAberration == other.chromaticAberration &&
                 noise == other.noise &&
@@ -222,7 +226,7 @@ data class ColorRecipeParams(
     /**
      * 序列化为 JSON 字符串
      */
-    fun toJson(): String = gson.toJson(this)
+    fun toJson(): String = gson.toJson(copy(halation = 0f))
 
     companion object {
         private val gson = Gson()
@@ -231,7 +235,7 @@ data class ColorRecipeParams(
          * 从 JSON 字符串反序列化
          */
         fun fromJson(json: String): ColorRecipeParams {
-            return gson.fromJson(json, ColorRecipeParams::class.java) ?: return DEFAULT
+            return gson.fromJson(json, ColorRecipeParams::class.java)?.copy(halation = 0f) ?: return DEFAULT
         }
 
         /**
@@ -264,6 +268,8 @@ enum class RecipeParam(
     FILM_GRAIN(R.string.recipe_param_film_grain, 0.0f, 1.0f, 0f),
     VIGNETTE(R.string.recipe_param_vignette, -1.0f, 1.0f, 0f),
     BLEACH_BYPASS(R.string.recipe_param_bleach_bypass, 0.0f, 1.0f, 0f),
+    BLOOM(R.string.recipe_param_bloom, 0.0f, 1.0f, 0f),
+    SOFT_LIGHT(R.string.recipe_param_soft_light, 0.0f, 1.0f, 0f),
     HDF(R.string.recipe_param_hdf, 0.0f, 1.0f, 0f),
     HALATION(R.string.recipe_param_halation, 0.0f, 1.0f, 0f),
     CHROMATIC_ABERRATION(R.string.recipe_param_chromatic_aberration, 0.0f, 1.0f, 0f),
@@ -331,6 +337,8 @@ enum class RecipeParam(
             FILM_GRAIN -> params.filmGrain
             VIGNETTE -> params.vignette
             BLEACH_BYPASS -> params.bleachBypass
+            BLOOM -> params.bloom
+            SOFT_LIGHT -> params.softLight
             HDF -> params.halation
             HALATION -> params.redHalation
             CHROMATIC_ABERRATION -> params.chromaticAberration
@@ -394,6 +402,8 @@ enum class RecipeParam(
             FILM_GRAIN -> params.copy(filmGrain = clampedValue)
             VIGNETTE -> params.copy(vignette = clampedValue)
             BLEACH_BYPASS -> params.copy(bleachBypass = clampedValue)
+            BLOOM -> params.copy(bloom = clampedValue)
+            SOFT_LIGHT -> params.copy(softLight = clampedValue)
             HDF -> params.copy(halation = clampedValue)
             HALATION -> params.copy(redHalation = clampedValue)
             CHROMATIC_ABERRATION -> params.copy(chromaticAberration = clampedValue)

@@ -56,7 +56,7 @@ import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
-import com.hinnka.mycamera.model.EffectParams
+import com.hinnka.mycamera.model.toEffectParams
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
@@ -1188,21 +1188,12 @@ fun GalleryEditScreen(
     }
 
     if (showEffectsSheet) {
-        val currentRecipe = editPhotoRecipeParams ?: editLutRecipeParams
-        val currentEffectParams = EffectParams(
-            vignette = currentRecipe.vignette,
-            filmGrain = currentRecipe.filmGrain,
-            hdf = currentRecipe.halation,
-            halation = currentRecipe.redHalation,
-            chromaticAberration = currentRecipe.chromaticAberration,
-            noise = currentRecipe.noise,
-            lowRes = currentRecipe.lowRes
-        )
+        val currentRecipe = previewRecipeParamsOverride ?: editPhotoRecipeParams ?: editLutRecipeParams
+        val currentEffectParams = currentRecipe.toEffectParams()
         EffectsBottomSheet(
             currentParams = currentEffectParams,
             onParamsChange = { newParams ->
-                val updatedRecipe = newParams.applyTo(currentRecipe)
-                viewModel.setPhotoRecipeParams(updatedRecipe)
+                viewModel.setPhotoEffectParams(newParams, currentRecipe)
             },
             onDismiss = { showEffectsSheet = false },
             containerColor = Color(0x151A1A1A)
