@@ -199,6 +199,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val TAG = "CameraViewModel"
+        private const val CAMERA_SWITCH_REOPEN_DELAY_MS = 350L
     }
 
     private val cameraController = Camera2Controller(application)
@@ -991,6 +992,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     // 保存当前的 SurfaceTexture 以便切换摄像头时重用
     private var currentSurfaceTexture: SurfaceTexture? = null
     private var cameraOpenInFlight = false
+    private var cameraReopenJob: Job? = null
 
     // 用于处理音量键连续按下的时间戳，防止抖动和过快响应
     private var lastVolumeKeyEventTime = 0L
@@ -1525,6 +1527,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun openCamera(surfaceTexture: SurfaceTexture) {
         PLog.d(TAG, "openCamera")
+        cameraReopenJob?.cancel()
         if (currentSurfaceTexture === surfaceTexture && (state.value.isPreviewActive || cameraOpenInFlight)) {
             PLog.d(
                 TAG,
@@ -1541,6 +1544,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 关闭相机
      */
     fun closeCamera() {
+        cameraReopenJob?.cancel()
         cameraOpenInFlight = false
         currentSurfaceTexture = null
         cameraController.closeCamera()
@@ -2069,7 +2073,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun switchCamera() {
         cameraController.switchCamera()
-        reopenCamera(preserveVideoRecording = true)
+        reopenCamera(
+            preserveVideoRecording = true,
+            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+        )
         zoomRatioByMain = 1f
     }
 
@@ -2078,20 +2085,43 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun switchToLens(cameraId: String) {
         cameraController.switchToCameraId(cameraId)
-        reopenCamera(preserveVideoRecording = true)
+        reopenCamera(
+            preserveVideoRecording = true,
+            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+        )
     }
 
     fun switchToLensAndSetZoomRatio(cameraId: String, ratio: Float) {
         cameraController.switchToCameraId(cameraId)
         setZoomRatioForCamera(ratio, cameraId)
-        reopenCamera(preserveVideoRecording = true)
+        reopenCamera(
+            preserveVideoRecording = true,
+            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+        )
     }
 
     /**
      * 重新打开相机（切换摄像头后使用）
      */
-    private fun reopenCamera(preserveVideoRecording: Boolean = false) {
-        currentSurfaceTexture?.let { texture ->
+    private fun reopenCamera(
+        preserveVideoRecording: Boolean = false,
+        delayMs: Long = 0L
+    ) {
+        if (currentSurfaceTexture == null) {
+            cameraOpenInFlight = false
+            return
+        }
+        cameraReopenJob?.cancel()
+        cameraOpenInFlight = true
+        cameraReopenJob = viewModelScope.launch {
+            if (delayMs > 0L) {
+                PLog.d(TAG, "Delay camera reopen after switch: ${delayMs}ms")
+                delay(delayMs)
+            }
+            val texture = currentSurfaceTexture ?: run {
+                cameraOpenInFlight = false
+                return@launch
+            }
             cameraController.openCamera(
                 surfaceTexture = texture,
                 preserveVideoRecording = preserveVideoRecording
@@ -4288,6 +4318,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        cameraReopenJob?.cancel()
         cameraController.release()
         contentRepository.lutManager.clearCache()
         contentRepository.frameManager.clearCache()
