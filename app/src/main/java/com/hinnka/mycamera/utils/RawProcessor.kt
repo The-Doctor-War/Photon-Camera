@@ -175,6 +175,7 @@ object RawProcessor {
         customWriter: Boolean = false,
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
+        baselineExposureEv: Float = 0f,
     ): Boolean {
         val orientation = when (rotation) {
             90 -> ExifInterface.ORIENTATION_ROTATE_90
@@ -197,7 +198,8 @@ object RawProcessor {
                 whiteLevel = whiteLevel,
                 valueDomain = valueDomain,
                 blackLevelMode = blackLevelMode,
-                customBlackLevel = customBlackLevel
+                customBlackLevel = customBlackLevel,
+                baselineExposureEv = baselineExposureEv
             )
         }
 

@@ -293,6 +293,7 @@ private fun PresetManagementItem(
                     PresetFeatureText(preset.aspectRatio.removePrefix("RATIO_").replace("_", ":"))
                     if (preset.useRaw) PresetFeatureText("RAW")
                     if (preset.useMFNR) PresetFeatureText("MFNR")
+                    if (preset.useHdrComposition) PresetFeatureText("HDR")
                     if (preset.useMFSR) PresetFeatureText("MFSR")
                     if (preset.rawSpectralFilmEnabled) PresetFeatureText("FILM")
                     if (preset.lutId != null) PresetFeatureText("LUT")

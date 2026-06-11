@@ -88,6 +88,7 @@ object SuperResolutionDngWriter {
         valueDomain: RawProcessor.RawBufferValueDomain,
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
+        baselineExposureEv: Float = 0f,
     ): Boolean {
         if (width <= 0 || height <= 0) return false
 
@@ -143,13 +144,19 @@ object SuperResolutionDngWriter {
                 cfaPattern = cfaPattern,
                 blackLevel = encodedBlackLevel,
                 whiteLevel = encodedWhiteLevel,
-                imageByteCount = imageByteCount
+                imageByteCount = imageByteCount,
+                baselineExposureEv = baselineExposureEv
             )
             val header = buildHeader(entries)
             outputStream.write(header)
             writeRawImage(outputStream, input, imageByteCount.toInt())
             outputStream.flush()
-            PLog.i(TAG, "Wrote super-resolution DNG ${width}x${height} blackLevel=${encodedBlackLevel.joinToString()} whiteLevel=$encodedWhiteLevel")
+            PLog.i(
+                TAG,
+                "Wrote super-resolution DNG ${width}x${height} " +
+                    "blackLevel=${encodedBlackLevel.joinToString()} whiteLevel=$encodedWhiteLevel " +
+                    "baselineExposureEv=$baselineExposureEv"
+            )
             true
         }.onFailure {
             PLog.w(TAG, "Failed to write super-resolution DNG ${width}x${height}", it)
@@ -166,6 +173,7 @@ object SuperResolutionDngWriter {
         blackLevel: FloatArray,
         whiteLevel: Int,
         imageByteCount: Long,
+        baselineExposureEv: Float,
     ): List<TiffEntry> {
         // The custom writer is used when the fused RAW dimensions no longer
         // match the camera sensor. The fused buffer already lives in its final
@@ -223,7 +231,7 @@ object SuperResolutionDngWriter {
             forwardMatrix1?.let { add(sRationalArray(TAG_FORWARD_MATRIX_1, colorTransformToDngMatrix(it))) }
             forwardMatrix2?.let { add(sRationalArray(TAG_FORWARD_MATRIX_2, colorTransformToDngMatrix(it))) }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
-            add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(0.0)))
+            add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(baselineExposureEv.toDouble())))
             add(short(TAG_CALIBRATION_ILLUMINANT_1, illuminant1))
             if (illuminant2 != null && colorMatrix2 != null) {
                 add(short(TAG_CALIBRATION_ILLUMINANT_2, illuminant2))

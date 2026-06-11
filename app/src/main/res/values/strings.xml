@@ -180,6 +180,7 @@
     <string name="settings_grid_lines">Grid Lines</string>
     <string name="settings_grid_description">Show grid lines for composition</string>
     <string name="settings_use_multi_frame">Multi-Frame Denoise</string>
+    <string name="settings_use_hdr_composition">HDR Fusion</string>
     <string name="settings_use_multiple_exposure">Multiple Exposure</string>
     <string name="multiple_exposure_finish">Finish</string>
     <string name="multiple_exposure_undo">Undo</string>

@@ -1080,7 +1080,6 @@ fun GalleryEditScreen(
                                         rawNlmNoiseFactor = editRawNlmNoiseFactor,
                                         rawExposureCompensation = editRawExposureCompensation,
                                         rawAutoExposure = editRawAutoExposure,
-                                        rawDROMode = editRawDROMode,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
                                         spectralFilmEnabled = editRawSpectralFilmEnabled,
@@ -1124,11 +1123,6 @@ fun GalleryEditScreen(
                                         },
                                         onRawAutoExposureChange = {
                                             viewModel.saveRawAutoExposureValue(currentPhoto, it) {
-                                                requestRawPreviewRefresh()
-                                            }
-                                        },
-                                        onRawDROModeChange = {
-                                            viewModel.saveRawDROModeValue(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },

@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -98,10 +97,10 @@ fun CameraTopSheet(
     onMoreSettingsClick: () -> Unit,
     useMFNR: Boolean,
     onMFNRToggle: (Boolean) -> Unit,
+    useHdrComposition: Boolean,
+    onHdrCompositionToggle: (Boolean) -> Unit,
     useMultipleExposure: Boolean,
     onMultipleExposureToggle: (Boolean) -> Unit,
-    useMFSR: Boolean,
-    onMFSRToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expandedVideoPanel by rememberSaveable { mutableStateOf<VideoSettingPanel?>(null) }
@@ -167,10 +166,9 @@ fun CameraTopSheet(
                     )
 
                     QuickSettingToggle(
-                        title = stringResource(R.string.settings_use_super_resolution),
-                        checked = useMFSR && !useRaw,
-                        onCheckedChange = onMFSRToggle,
-                        enabled = !useRaw,
+                        title = stringResource(R.string.settings_use_hdr_composition),
+                        checked = useHdrComposition,
+                        onCheckedChange = onHdrCompositionToggle,
                         modifier = Modifier.weight(1f)
                     )
 
@@ -502,7 +500,6 @@ fun CameraTopSheet(
                     rawNlmNoiseFactor = rawNlmNoiseFactor,
                     rawExposureCompensation = rawExposureCompensation,
                     rawAutoExposure = rawAutoExposure,
-                    rawDROMode = rawDROMode,
                     rawBlackPointCorrection = rawBlackPointCorrection,
                     rawWhitePointCorrection = rawWhitePointCorrection,
                     spectralFilmEnabled = rawSpectralFilmEnabled,
@@ -514,7 +511,6 @@ fun CameraTopSheet(
                     onRawNlmNoiseFactorChange = {},
                     onRawExposureCompensationChange = {},
                     onRawAutoExposureChange = {},
-                    onRawDROModeChange = onRawDROModeChange,
                     onRawBlackPointCorrectionChange = {},
                     onRawWhitePointCorrectionChange = {},
                     onSpectralFilmEnabledChange = onRawSpectralFilmEnabledChange,

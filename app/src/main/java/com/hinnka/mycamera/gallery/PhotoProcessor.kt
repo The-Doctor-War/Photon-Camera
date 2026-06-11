@@ -20,7 +20,6 @@ import com.hinnka.mycamera.lut.LutManager
 import com.hinnka.mycamera.processor.DepthBokehProcessor
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrRenderResult
-import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.LargeDirectBuffer
@@ -456,9 +455,6 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
-            rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
-                metadata.droMode
-            ),
             sharpeningValue = 0.4f,
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId,
@@ -528,9 +524,6 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
-            rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
-                metadata.droMode
-            ),
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId,
             spectralFilmEnabled = metadata.spectralFilmEnabled,

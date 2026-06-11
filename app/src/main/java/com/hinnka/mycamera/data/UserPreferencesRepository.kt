@@ -124,6 +124,7 @@ data class UserPreferences(
     val defaultFocalLength: Float = 0f, // 默认焦段 (mm)，0表示不设置
     val zoomDisplayMode: String = "FOCAL_LENGTH",
     val useMFNR: Boolean = false, // 是否使用多帧降噪
+    val useHdrComposition: Boolean = true, // 是否使用 HDR 包围曝光合成
     val multiFrameCount: Int = MultiFrameConfig.DEFAULT_FRAME_COUNT, // 多帧降噪帧数
     val useMultipleExposure: Boolean = false, // 是否启用多重曝光
     val multipleExposureCount: Int = 2, // 多重曝光张数
@@ -202,6 +203,7 @@ data class CameraFeaturePreferencesUpdate(
     val aspectRatio: PreferenceUpdateValue<String>? = null,
     val useRaw: PreferenceUpdateValue<Boolean>? = null,
     val useMFNR: PreferenceUpdateValue<Boolean>? = null,
+    val useHdrComposition: PreferenceUpdateValue<Boolean>? = null,
     val useMFSR: PreferenceUpdateValue<Boolean>? = null,
     val useMultipleExposure: PreferenceUpdateValue<Boolean>? = null,
     val frameId: PreferenceUpdateValue<String?>? = null,
@@ -283,6 +285,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // 多帧合成 Key
         private val USE_MULTI_FRAME = booleanPreferencesKey("use_multi_frame")
+        private val USE_HDR_COMPOSITION = booleanPreferencesKey("use_hdr_composition")
         private val MULTI_FRAME_COUNT = intPreferencesKey("multi_frame_count")
         private val USE_MULTIPLE_EXPOSURE = booleanPreferencesKey("use_multiple_exposure")
         private val MULTIPLE_EXPOSURE_COUNT = intPreferencesKey("multiple_exposure_count")
@@ -421,6 +424,7 @@ class UserPreferencesRepository(private val context: Context) {
                 defaultFocalLength = preferences[DEFAULT_FOCAL_LENGTH] ?: 0f,
                 zoomDisplayMode = preferences[ZOOM_DISPLAY_MODE] ?: "FOCAL_LENGTH",
                 useMFNR = preferences[USE_MULTI_FRAME] ?: false,
+                useHdrComposition = preferences[USE_HDR_COMPOSITION] ?: true,
                 multiFrameCount = preferences[MULTI_FRAME_COUNT]
                     ?.coerceIn(MultiFrameConfig.MIN_FRAME_COUNT, MultiFrameConfig.MAX_FRAME_COUNT)
                     ?: MultiFrameConfig.DEFAULT_FRAME_COUNT,
@@ -1386,6 +1390,12 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveUseHdrComposition(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[USE_HDR_COMPOSITION] = enabled
+        }
+    }
+
     /**
      * 保存是否启用幻影模式
      */
@@ -1571,6 +1581,9 @@ class UserPreferencesRepository(private val context: Context) {
             }
             update.useMFNR?.let {
                 preferences[USE_MULTI_FRAME] = it.value
+            }
+            update.useHdrComposition?.let {
+                preferences[USE_HDR_COMPOSITION] = it.value
             }
             update.useMFSR?.let {
                 preferences[USE_SUPER_RESOLUTION] = it.value

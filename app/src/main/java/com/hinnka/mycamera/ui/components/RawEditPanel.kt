@@ -49,7 +49,6 @@ fun RawEditPanel(
     rawNlmNoiseFactor: Float,
     rawExposureCompensation: Float,
     rawAutoExposure: Boolean,
-    rawDROMode: String,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
     spectralFilmEnabled: Boolean,
@@ -61,7 +60,6 @@ fun RawEditPanel(
     onRawNlmNoiseFactorChange: (Float) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
     onRawAutoExposureChange: (Boolean) -> Unit,
-    onRawDROModeChange: (String) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onSpectralFilmEnabledChange: (Boolean) -> Unit,
@@ -183,13 +181,6 @@ fun RawEditPanel(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
-
-        RawDROModeSettingItem(
-            title = stringResource(R.string.settings_raw_dro),
-            description = stringResource(R.string.settings_raw_dro_description),
-            currentMode = DROMode.fromPersistedName(rawDROMode),
-            onModeSelected = { onRawDROModeChange(it.name) }
-        )
 
         if (contentMode != RawEditPanelContentMode.QUICK) {
             RawSwitchSettingItem(

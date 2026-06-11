@@ -16,10 +16,13 @@ object MeteringSystem {
     private const val TAG = "MeteringSystem"
     private const val DISPLAY_TARGET_LUMA = 0.18f
     private const val ACR3_AVERAGE_TONE_CURVE_EV = 1f
-    private const val MATRIX_GRID_COLUMNS = 5
-    private const val MATRIX_GRID_ROWS = 5
-    private const val MIN_METERING_WEIGHT = 0.08f
-    private const val MAX_METERING_WEIGHT = 3.0f
+    private const val MID_TONE_GRID_COLUMNS = 7
+    private const val MID_TONE_GRID_ROWS = 7
+    private const val MID_TONE_ZONE_SAMPLE_TRIM_FRACTION = 0.15f
+    private const val MID_TONE_ZONE_REJECT_FRACTION = 0.15f
+    private const val MID_TONE_BUCKET_COUNT = 9
+    private const val MID_TONE_MIN_BUCKET_RANGE_EV = 0.35f
+    private const val MID_TONE_MIN_WEIGHT = 0.001f
     private const val LUMA_FLOOR = 0.001f
     private const val MAX_LINEAR_LUMA = 16.0f
     private const val MIN_DEPTH_SEPARATION = 0.08f
@@ -38,27 +41,50 @@ object MeteringSystem {
         val enabled: Boolean
     )
 
+    private data class MidToneZone(
+        val luma: Float,
+        val weight: Float
+    )
+
+    private data class MidToneReference(
+        val luma: Float,
+        val zoneMedianLuma: Float,
+        val bucketMedianLuma: Float,
+        val retainedZoneCount: Int,
+        val retainedBucketCount: Int
+    )
+
+    private data class MidToneBucket(
+        var weightedLogLumaSum: Double = 0.0,
+        var weightSum: Double = 0.0,
+        var zoneCount: Int = 0
+    )
+
+    private data class MidToneSample(
+        val luma: Float,
+        val weight: Float
+    )
+
     @SuppressLint("HalfFloat")
     fun analyzeLinearHalfFloatExposureEv(
         pixelBuffer: ShortBuffer,
         width: Int,
         height: Int,
         weightBuffer: ByteBuffer? = null, // Optional weight mask (e.g. depth map)
-        droMode: RawProcessingPreferences.DROMode = RawProcessingPreferences.DROMode.OFF
+        linearExposureGain: Float
     ): MeteringResult {
         return analyzeExposureEv(
             width = width,
             height = height,
             weightBuffer = weightBuffer,
-            droMode = droMode,
-            targetLuma = DISPLAY_TARGET_LUMA,
+            targetLuma = DISPLAY_TARGET_LUMA * 2f.pow(-ACR3_AVERAGE_TONE_CURVE_EV),
+            linearExposureGain = linearExposureGain,
             tag = "Linear RAW AE"
         ) { index ->
             val base = index * 4
-            val scale = 2f.pow(ACR3_AVERAGE_TONE_CURVE_EV)
-            val r = Half.toFloat(pixelBuffer.get(base)) * scale
-            val g = Half.toFloat(pixelBuffer.get(base + 1)) * scale
-            val b = Half.toFloat(pixelBuffer.get(base + 2)) * scale
+            val r = Half.toFloat(pixelBuffer.get(base))
+            val g = Half.toFloat(pixelBuffer.get(base + 1))
+            val b = Half.toFloat(pixelBuffer.get(base + 2))
             r * 0.2126f + g * 0.7152f + b * 0.0722f
         }
     }
@@ -67,8 +93,8 @@ object MeteringSystem {
         width: Int,
         height: Int,
         weightBuffer: ByteBuffer?,
-        droMode: RawProcessingPreferences.DROMode,
         targetLuma: Float,
+        linearExposureGain: Float,
         tag: String,
         lumaAt: (Int) -> Float
     ): MeteringResult {
@@ -77,9 +103,6 @@ object MeteringSystem {
 
         val depthWeights = decodeDepthWeights(weightBuffer, pixelCount)
         val lumas = FloatArray(pixelCount)
-        var weightedLumaSum = 0.0
-        var weightedLogLumaSum = 0.0
-        var totalWeight = 0.0
         var sanitizedSampleCount = 0
 
         for (y in 0 until height) {
@@ -90,27 +113,25 @@ object MeteringSystem {
                 if (rawLuma != luma) {
                     sanitizedSampleCount++
                 }
-                val spatialWeight = calculateMatrixSpatialWeight(x, y, width, height)
-                val toneWeight = calculateReflectiveMeterWeight(luma)
-                val depthWeight = depthWeights?.weights?.get(idx) ?: 1f
-                val finalWeight = sanitizeMeteringWeight(spatialWeight * toneWeight * depthWeight)
-
                 lumas[idx] = luma
-                weightedLumaSum += (luma * finalWeight).toDouble()
-                weightedLogLumaSum += (log2(luma.coerceAtLeast(LUMA_FLOOR)) * finalWeight).toDouble()
-                totalWeight += finalWeight.toDouble()
             }
         }
+
+        val midToneReference = calculateMidToneReferenceLuma(
+            lumas = lumas,
+            width = width,
+            height = height,
+            depthWeights = depthWeights?.weights,
+            fallback = targetLuma
+        )
+        val midToneLuma = midToneReference.luma
 
         lumas.sort()
         val p998 = lumas[(pixelCount * 0.998f).toInt().coerceIn(0, pixelCount - 1)]
 
-        val highlightAnchorGain = 2f.pow(ACR3_AVERAGE_TONE_CURVE_EV + droMode.captureExposureReductionEv) / p998.coerceAtLeast(0.01f)
-        val safeTotalWeight = totalWeight.coerceAtLeast(0.001)
-        val linearAvgLuma = sanitizeAverageLuma((weightedLumaSum / safeTotalWeight).toFloat(), targetLuma)
-        val logAvgLuma = sanitizeAverageLuma(exp2((weightedLogLumaSum / safeTotalWeight).toFloat()), targetLuma)
-        val avgLuma = sanitizeAverageLuma(lerp(logAvgLuma, linearAvgLuma, 0.25f), targetLuma)
-        val midToneGain = targetLuma / avgLuma.coerceAtLeast(0.001f)
+        val highlightAnchorGain = linearExposureGain / p998.coerceAtLeast(0.01f)
+        val avgLuma = midToneLuma
+        val midToneGain = targetLuma / midToneLuma.coerceAtLeast(LUMA_FLOOR)
         val dynamicRangeGap = midToneGain / highlightAnchorGain
 
         val extra = smoothStep(0.66f, 2.2f, dynamicRangeGap)
@@ -119,8 +140,10 @@ object MeteringSystem {
 
         PLog.d(
             TAG,
-            "$tag: dro=$droMode p998=$p998 avg=$avgLuma target=$targetLuma " +
-                "logAvg=$logAvgLuma linearAvg=$linearAvgLuma " +
+            "$tag: p998=$p998 target=$targetLuma midToneLuma=$midToneLuma " +
+                "midToneZoneMedianLuma=${midToneReference.zoneMedianLuma} " +
+                "midToneBucketMedianLuma=${midToneReference.bucketMedianLuma} " +
+                "midToneZones=${midToneReference.retainedZoneCount} midToneBuckets=${midToneReference.retainedBucketCount} " +
                 "midToneGain=$midToneGain highlightAnchorGain=$highlightAnchorGain gain=$adaptiveGain " +
                 "ev=$rawMeteredEv gap=$dynamicRangeGap " +
                 "depth=${depthWeights?.enabled == true} depthSeparation=${depthWeights?.separation ?: 0f} " +
@@ -176,45 +199,6 @@ object MeteringSystem {
         )
     }
 
-    private fun calculateMatrixSpatialWeight(
-        x: Int,
-        y: Int,
-        width: Int,
-        height: Int
-    ): Float {
-        val u = (x + 0.5f) / width.coerceAtLeast(1)
-        val v = (y + 0.5f) / height.coerceAtLeast(1)
-
-        val matrixWeight = calculateZoneMeterWeight(u, v)
-        val centerWeight = gaussian2d(u, v, 0.5f, 0.5f, 0.30f)
-        val thirdsWeight = (
-            gaussian2d(u, v, 1f / 3f, 1f / 3f, 0.18f) +
-                gaussian2d(u, v, 2f / 3f, 1f / 3f, 0.18f) +
-                gaussian2d(u, v, 1f / 3f, 2f / 3f, 0.18f) +
-                gaussian2d(u, v, 2f / 3f, 2f / 3f, 0.18f)
-            ) * 0.25f
-        val edgeFalloff = lerp(0.72f, 1f, calculateEdgeConfidence(u, v))
-
-        return (0.55f * matrixWeight + 0.30f * centerWeight + 0.15f * thirdsWeight) * edgeFalloff
-    }
-
-    private fun calculateZoneMeterWeight(u: Float, v: Float): Float {
-        val zoneX = (u * MATRIX_GRID_COLUMNS).toInt().coerceIn(0, MATRIX_GRID_COLUMNS - 1)
-        val zoneY = (v * MATRIX_GRID_ROWS).toInt().coerceIn(0, MATRIX_GRID_ROWS - 1)
-        val centerX = (zoneX + 0.5f) / MATRIX_GRID_COLUMNS
-        val centerY = (zoneY + 0.5f) / MATRIX_GRID_ROWS
-        return 0.75f + gaussian2d(centerX, centerY, 0.5f, 0.5f, 0.34f) * 0.55f
-    }
-
-    private fun calculateReflectiveMeterWeight(luma: Float): Float {
-        val safeLuma = luma.coerceAtLeast(0f)
-        val shadowConfidence = smoothStep(0.002f, 0.030f, safeLuma)
-        val highlightPenalty = 1f - smoothStep(0.72f, 1.08f, safeLuma)
-        val midTonePreference = gaussian1d(log2(safeLuma.coerceAtLeast(0.002f) / DISPLAY_TARGET_LUMA), 0f, 2.1f)
-        return lerp(0.70f, 1.18f, midTonePreference) * lerp(0.72f, 1f, shadowConfidence) *
-            lerp(0.35f, 1f, highlightPenalty)
-    }
-
     private fun calculateDepthSeparationWeight(
         depth: Float,
         median: Float,
@@ -233,27 +217,343 @@ object MeteringSystem {
         }
     }
 
+    private fun calculateMidToneReferenceLuma(
+        lumas: FloatArray,
+        width: Int,
+        height: Int,
+        depthWeights: FloatArray?,
+        fallback: Float
+    ): MidToneReference {
+        if (lumas.isEmpty() || width <= 0 || height <= 0) {
+            return fallbackMidToneReference(fallback)
+        }
+
+        val zones = ArrayList<MidToneZone>(MID_TONE_GRID_COLUMNS * MID_TONE_GRID_ROWS)
+        for (zoneY in 0 until MID_TONE_GRID_ROWS) {
+            val startY = zoneY * height / MID_TONE_GRID_ROWS
+            val endY = (zoneY + 1) * height / MID_TONE_GRID_ROWS
+            if (startY >= endY) continue
+
+            for (zoneX in 0 until MID_TONE_GRID_COLUMNS) {
+                val startX = zoneX * width / MID_TONE_GRID_COLUMNS
+                val endX = (zoneX + 1) * width / MID_TONE_GRID_COLUMNS
+                if (startX >= endX) continue
+
+                val zoneLuma = calculateZoneTrimmedMeanLuma(lumas, width, startX, endX, startY, endY, fallback)
+                val centerU = ((startX + endX) * 0.5f) / width
+                val centerV = ((startY + endY) * 0.5f) / height
+                zones += MidToneZone(
+                    luma = zoneLuma,
+                    weight = calculateMidToneZoneWeight(
+                        depthWeights = depthWeights,
+                        width = width,
+                        startX = startX,
+                        endX = endX,
+                        startY = startY,
+                        endY = endY,
+                        centerU = centerU,
+                        centerV = centerV
+                    )
+                )
+            }
+        }
+
+        if (zones.isEmpty()) {
+            return fallbackMidToneReference(fallback)
+        }
+
+        zones.sortBy { it.luma }
+        val rejectZoneCount = (zones.size * MID_TONE_ZONE_REJECT_FRACTION)
+            .toInt()
+            .coerceAtMost((zones.size - 1) / 2)
+        val startIndex = rejectZoneCount
+        val endIndex = zones.size - rejectZoneCount
+        if (startIndex >= endIndex) {
+            val fallbackLuma = sanitizeAverageLuma(zones[zones.size / 2].luma, fallback)
+            return MidToneReference(
+                luma = fallbackLuma,
+                zoneMedianLuma = fallbackLuma,
+                bucketMedianLuma = fallbackLuma,
+                retainedZoneCount = 1,
+                retainedBucketCount = 1
+            )
+        }
+
+        val zoneMedianLuma = sanitizeAverageLuma(
+            weightedMedianMidToneLuma(zones, startIndex, endIndex),
+            fallback
+        )
+        val bucketSamples = buildToneBalancedMidToneSamples(zones, startIndex, endIndex)
+        val bucketMedianLuma = sanitizeAverageLuma(
+            weightedMedianMidToneSampleLuma(bucketSamples).takeIf { it > 0f } ?: zoneMedianLuma,
+            fallback
+        )
+
+        return MidToneReference(
+            luma = bucketMedianLuma,
+            zoneMedianLuma = zoneMedianLuma,
+            bucketMedianLuma = bucketMedianLuma,
+            retainedZoneCount = endIndex - startIndex,
+            retainedBucketCount = bucketSamples.size
+        )
+    }
+
+    private fun fallbackMidToneReference(fallback: Float): MidToneReference {
+        return MidToneReference(
+            luma = fallback,
+            zoneMedianLuma = fallback,
+            bucketMedianLuma = fallback,
+            retainedZoneCount = 0,
+            retainedBucketCount = 0
+        )
+    }
+
+    private fun calculateZoneTrimmedMeanLuma(
+        lumas: FloatArray,
+        width: Int,
+        startX: Int,
+        endX: Int,
+        startY: Int,
+        endY: Int,
+        fallback: Float,
+    ): Float {
+        val sampleCount = (endX - startX) * (endY - startY)
+        if (sampleCount <= 0) {
+            return fallback
+        }
+
+        val samples = FloatArray(sampleCount)
+        var sampleIndex = 0
+        for (y in startY until endY) {
+            val rowOffset = y * width
+            for (x in startX until endX) {
+                samples[sampleIndex++] = lumas[rowOffset + x]
+            }
+        }
+
+        return trimmedMean(samples, MID_TONE_ZONE_SAMPLE_TRIM_FRACTION, fallback)
+    }
+
+    private fun trimmedMean(
+        values: FloatArray,
+        trimFraction: Float,
+        fallback: Float
+    ): Float {
+        if (values.isEmpty()) {
+            return fallback
+        }
+
+        values.sort()
+        val trimCount = (values.size * trimFraction.coerceIn(0f, 0.49f))
+            .toInt()
+            .coerceAtMost((values.size - 1) / 2)
+        val startIndex = trimCount
+        val endIndex = values.size - trimCount
+        var sum = 0.0
+        for (i in startIndex until endIndex) {
+            sum += values[i].toDouble()
+        }
+
+        return (sum / (endIndex - startIndex).coerceAtLeast(1)).toFloat()
+    }
+
+    private fun weightedMedianMidToneLuma(
+        sortedZones: List<MidToneZone>,
+        startIndex: Int,
+        endIndex: Int
+    ): Float {
+        var totalWeight = 0.0
+        for (i in startIndex until endIndex) {
+            val weight = sortedZones[i].weight
+            if (weight.isFinite() && weight > 0f) {
+                totalWeight += weight.toDouble()
+            }
+        }
+
+        if (totalWeight <= 0.0) {
+            return sortedZones[(startIndex + endIndex - 1) / 2].luma
+        }
+
+        val halfWeight = totalWeight * 0.5
+        var cumulativeWeight = 0.0
+        for (i in startIndex until endIndex) {
+            val weight = sortedZones[i].weight
+            if (weight.isFinite() && weight > 0f) {
+                cumulativeWeight += weight.toDouble()
+            }
+            if (cumulativeWeight >= halfWeight) {
+                return sortedZones[i].luma
+            }
+        }
+
+        return sortedZones[endIndex - 1].luma
+    }
+
+    private fun buildToneBalancedMidToneSamples(
+        sortedZones: List<MidToneZone>,
+        startIndex: Int,
+        endIndex: Int
+    ): List<MidToneSample> {
+        if (startIndex >= endIndex) {
+            return emptyList()
+        }
+
+        val lowLogLuma = log2(sortedZones[startIndex].luma.coerceAtLeast(LUMA_FLOOR))
+        val highLogLuma = log2(sortedZones[endIndex - 1].luma.coerceAtLeast(LUMA_FLOOR))
+        val logRange = highLogLuma - lowLogLuma
+        if (!logRange.isFinite() || logRange < MID_TONE_MIN_BUCKET_RANGE_EV) {
+            return listOf(
+                MidToneSample(
+                    luma = weightedGeometricMeanMidToneLuma(sortedZones, startIndex, endIndex),
+                    weight = 1f
+                )
+            )
+        }
+
+        val buckets = Array(MID_TONE_BUCKET_COUNT) { MidToneBucket() }
+        for (i in startIndex until endIndex) {
+            val zone = sortedZones[i]
+            val weight = zone.weight
+            if (weight.isFinite() && weight > 0f) {
+                val logLuma = log2(zone.luma.coerceAtLeast(LUMA_FLOOR))
+                val bucketIndex = (((logLuma - lowLogLuma) / logRange) * MID_TONE_BUCKET_COUNT)
+                    .toInt()
+                    .coerceIn(0, MID_TONE_BUCKET_COUNT - 1)
+                val bucket = buckets[bucketIndex]
+                bucket.weightedLogLumaSum += (logLuma * weight).toDouble()
+                bucket.weightSum += weight.toDouble()
+                bucket.zoneCount++
+            }
+        }
+
+        val samples = ArrayList<MidToneSample>(MID_TONE_BUCKET_COUNT)
+        for (bucket in buckets) {
+            if (bucket.zoneCount > 0 && bucket.weightSum > 0.0) {
+                val representativeLogLuma = (bucket.weightedLogLumaSum / bucket.weightSum).toFloat()
+                samples += MidToneSample(
+                    luma = exp2(representativeLogLuma),
+                    weight = (bucket.weightSum / bucket.zoneCount).toFloat().coerceAtLeast(MID_TONE_MIN_WEIGHT)
+                )
+            }
+        }
+        return samples
+    }
+
+    private fun weightedMedianMidToneSampleLuma(samples: List<MidToneSample>): Float {
+        if (samples.isEmpty()) {
+            return 0f
+        }
+
+        var totalWeight = 0.0
+        for (sample in samples) {
+            if (sample.weight.isFinite() && sample.weight > 0f) {
+                totalWeight += sample.weight.toDouble()
+            }
+        }
+
+        if (totalWeight <= 0.0) {
+            return samples[samples.size / 2].luma
+        }
+
+        val halfWeight = totalWeight * 0.5
+        var cumulativeWeight = 0.0
+        for (sample in samples) {
+            if (sample.weight.isFinite() && sample.weight > 0f) {
+                cumulativeWeight += sample.weight.toDouble()
+            }
+            if (cumulativeWeight >= halfWeight) {
+                return sample.luma
+            }
+        }
+
+        return samples.last().luma
+    }
+
+    private fun weightedGeometricMeanMidToneLuma(
+        sortedZones: List<MidToneZone>,
+        startIndex: Int,
+        endIndex: Int
+    ): Float {
+        var weightedLogSum = 0.0
+        var totalWeight = 0.0
+        for (i in startIndex until endIndex) {
+            val zone = sortedZones[i]
+            val weight = zone.weight
+            if (weight.isFinite() && weight > 0f) {
+                weightedLogSum += (log2(zone.luma.coerceAtLeast(LUMA_FLOOR)) * weight).toDouble()
+                totalWeight += weight.toDouble()
+            }
+        }
+
+        return if (totalWeight > 0.0) {
+            exp2((weightedLogSum / totalWeight).toFloat())
+        } else {
+            sortedZones[(startIndex + endIndex - 1) / 2].luma
+        }
+    }
+
+    private fun calculateMidToneZoneWeight(
+        depthWeights: FloatArray?,
+        width: Int,
+        startX: Int,
+        endX: Int,
+        startY: Int,
+        endY: Int,
+        centerU: Float,
+        centerV: Float
+    ): Float {
+        val centerWeight = calculateMidToneCenterWeight(centerU, centerV)
+        val depthWeight = calculateZoneDepthWeight(depthWeights, width, startX, endX, startY, endY)
+        val weight = centerWeight * depthWeight
+        return if (weight.isFinite()) {
+            weight.coerceAtLeast(MID_TONE_MIN_WEIGHT)
+        } else {
+            MID_TONE_MIN_WEIGHT
+        }
+    }
+
+    private fun calculateZoneDepthWeight(
+        depthWeights: FloatArray?,
+        width: Int,
+        startX: Int,
+        endX: Int,
+        startY: Int,
+        endY: Int
+    ): Float {
+        if (depthWeights == null) {
+            return 1f
+        }
+
+        var sum = 0.0
+        var count = 0
+        for (y in startY until endY) {
+            val rowOffset = y * width
+            for (x in startX until endX) {
+                val weight = depthWeights.getOrNull(rowOffset + x) ?: continue
+                if (weight.isFinite() && weight > 0f) {
+                    sum += weight.toDouble()
+                    count++
+                }
+            }
+        }
+
+        return if (count > 0) {
+            (sum / count).toFloat().coerceAtLeast(MID_TONE_MIN_WEIGHT)
+        } else {
+            1f
+        }
+    }
+
+    private fun calculateMidToneCenterWeight(u: Float, v: Float): Float {
+        val centerWeight = gaussian2d(u, v, 0.5f, 0.5f, 0.32f)
+        return 0.35f + centerWeight * 0.65f
+    }
+
     private fun sanitizeAverageLuma(value: Float, fallback: Float): Float {
         return if (value.isFinite() && value > 0f) {
             value.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
         } else {
             fallback.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
-        }
-    }
-
-    private fun sanitizeMeteringWeight(value: Float): Float {
-        return if (value.isFinite()) {
-            value.coerceIn(MIN_METERING_WEIGHT, MAX_METERING_WEIGHT)
-        } else {
-            MIN_METERING_WEIGHT
-        }
-    }
-
-    private fun sanitizeMeteringGain(value: Float): Float {
-        return if (value.isFinite() && value > 0f) {
-            value
-        } else {
-            1f
         }
     }
 
@@ -272,38 +572,6 @@ object MeteringSystem {
 
     private fun exp2(value: Float): Float {
         return exp(value * ln(2.0)).toFloat()
-    }
-
-    private fun calculateHighlightWeight(
-        luma: Float,
-        droMode: RawProcessingPreferences.DROMode
-    ): Float {
-        if (!droMode.isEnabled) {
-            return 1f
-        }
-
-        val minWeight = when (droMode) {
-            RawProcessingPreferences.DROMode.OFF -> 1f
-            RawProcessingPreferences.DROMode.DR100 -> 0.5f
-            RawProcessingPreferences.DROMode.DR200 -> 0.25f
-            RawProcessingPreferences.DROMode.DR400 -> 0.12f
-        }
-        val highlightFraction = smoothStep(0.65f, 0.95f, luma)
-        return lerp(1f, minWeight, highlightFraction)
-    }
-
-    private fun calculateEdgeConfidence(u: Float, v: Float): Float {
-        val horizontal = 1f - kotlin.math.abs(u - 0.5f) * 2f
-        val vertical = 1f - kotlin.math.abs(v - 0.5f) * 2f
-        return smoothStep(0f, 0.75f, minOf(horizontal, vertical))
-    }
-
-    private fun gaussian1d(value: Float, mean: Float, sigma: Float): Float {
-        if (!value.isFinite() || !mean.isFinite() || !sigma.isFinite()) {
-            return 0f
-        }
-        val normalized = (value - mean) / sigma.coerceAtLeast(0.001f)
-        return exp((-0.5f * normalized * normalized).toDouble()).toFloat()
     }
 
     private fun gaussian2d(

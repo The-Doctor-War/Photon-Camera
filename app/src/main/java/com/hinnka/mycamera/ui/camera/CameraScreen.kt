@@ -178,6 +178,7 @@ fun CameraScreen(
     val categoryOrder by viewModel.categoryOrder.collectAsState(emptyList())
     val useRaw by viewModel.useRaw.collectAsState()
     val useMFNR by viewModel.useMFNR.collectAsState()
+    val useHdrComposition by viewModel.useHdrComposition.collectAsState()
     val useMultipleExposure by viewModel.useMultipleExposure.collectAsState()
     val useMFSR by viewModel.useMFSR.collectAsState()
     val useLivePhoto by viewModel.useLivePhoto.collectAsState()
@@ -1364,12 +1365,12 @@ fun CameraScreen(
             onMFNRToggle = {
                 viewModel.setUseMFNR(it)
             },
+            useHdrComposition = useHdrComposition,
+            onHdrCompositionToggle = {
+                viewModel.setUseHdrComposition(it)
+            },
             useMultipleExposure = useMultipleExposure,
             onMultipleExposureToggle = { viewModel.setUseMultipleExposure(it) },
-            useMFSR = useMFSR,
-            onMFSRToggle = {
-                viewModel.setUseMFSR(it)
-            },
             modifier = Modifier.padding(top = topSafePadding)
         )
 

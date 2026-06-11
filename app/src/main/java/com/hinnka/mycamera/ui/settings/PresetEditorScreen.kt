@@ -89,6 +89,7 @@ fun PresetEditorScreen(
     var aspectRatio by remember { mutableStateOf(sourcePreset?.aspectRatio ?: AspectRatio.RATIO_4_3.name) }
     var useRaw by remember { mutableStateOf(sourcePreset?.useRaw ?: false) }
     var useMFNR by remember { mutableStateOf(sourcePreset?.useMFNR ?: false) }
+    var useHdrComposition by remember { mutableStateOf(sourcePreset?.useHdrComposition ?: true) }
     var useMFSR by remember { mutableStateOf(sourcePreset?.useMFSR ?: false) }
     var frameId by remember { mutableStateOf(sourcePreset?.frameId) }
 
@@ -126,6 +127,7 @@ fun PresetEditorScreen(
             aspectRatio = aspectRatio,
             useRaw = useRaw,
             useMFNR = useMFNR,
+            useHdrComposition = useHdrComposition,
             useMFSR = useMFSR,
             frameId = frameId,
             rawDcpId = rawDcpId,
@@ -283,6 +285,16 @@ fun PresetEditorScreen(
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
 
                 SwitchSettingItem(
+                    title = stringResource(R.string.settings_use_hdr_composition),
+                    checked = useHdrComposition,
+                    onCheckedChange = {
+                        useHdrComposition = it
+                    }
+                )
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+
+                SwitchSettingItem(
                     title = stringResource(R.string.settings_use_super_resolution),
                     checked = useMFSR,
                     onCheckedChange = {
@@ -433,7 +445,7 @@ fun PresetEditorScreen(
                     }
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+                /*HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
 
                 val droMap = mapOf(
                     "OFF" to stringResource(R.string.settings_dro_off),
@@ -454,7 +466,7 @@ fun PresetEditorScreen(
                             rawDROMode = matchedKey
                         }
                     }
-                )
+                )*/
             }
 
             SettingsSection(

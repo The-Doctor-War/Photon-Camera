@@ -178,6 +178,7 @@
     <string name="settings_grid_lines">网格线显示</string>
     <string name="settings_grid_description">在拍摄时显示网格线，辅助构图</string>
     <string name="settings_use_multi_frame">多帧降噪</string>
+    <string name="settings_use_hdr_composition">HDR 合成</string>
     <string name="settings_use_multiple_exposure">多重曝光</string>
     <string name="multiple_exposure_finish">完成</string>
     <string name="multiple_exposure_undo">撤销</string>

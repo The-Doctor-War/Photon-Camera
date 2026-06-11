@@ -2,6 +2,8 @@ package com.hinnka.mycamera.model
 
 import androidx.annotation.Keep
 import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.hinnka.mycamera.camera.AspectRatio
 
@@ -18,6 +20,7 @@ data class CameraPreset(
     val aspectRatio: String = AspectRatio.RATIO_4_3.name,
     val useRaw: Boolean = false,
     val useMFNR: Boolean = false,
+    val useHdrComposition: Boolean = true,
     val useMFSR: Boolean = false,
     val frameId: String? = null,
     // Quick RAW 功能
@@ -44,6 +47,16 @@ data class CameraPreset(
 
     companion object {
         private val gson = Gson()
+
+        private fun normalizePresetJson(element: JsonElement): JsonElement {
+            if (element.isJsonObject) {
+                val obj = element.asJsonObject
+                if (!obj.has("useHdrComposition")) {
+                    obj.addProperty("useHdrComposition", false)
+                }
+            }
+            return element
+        }
 
         // 场景默认预设
         val BUILT_IN_PRESETS = listOf(
@@ -160,7 +173,8 @@ data class CameraPreset(
 
         fun fromJson(json: String): CameraPreset? {
             return try {
-                gson.fromJson(json, CameraPreset::class.java)?.withoutLegacyHdf()
+                val element = normalizePresetJson(JsonParser.parseString(json))
+                gson.fromJson(element, CameraPreset::class.java)?.withoutLegacyHdf()
             } catch (e: Exception) {
                 null
             }
@@ -170,7 +184,11 @@ data class CameraPreset(
             if (json.isEmpty()) return emptyList()
             return try {
                 val type = object : TypeToken<List<CameraPreset>>() {}.type
-                (gson.fromJson(json, type) ?: emptyList<CameraPreset>()).map { it.withoutLegacyHdf() }
+                val element = JsonParser.parseString(json)
+                if (element.isJsonArray) {
+                    element.asJsonArray.forEach { normalizePresetJson(it) }
+                }
+                (gson.fromJson(element, type) ?: emptyList<CameraPreset>()).map { it.withoutLegacyHdf() }
             } catch (e: Exception) {
                 emptyList()
             }

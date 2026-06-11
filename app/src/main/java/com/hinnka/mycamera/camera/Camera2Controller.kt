@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
-import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.utils.OrientationObserver
 import com.hinnka.mycamera.video.CaptureMode
@@ -82,6 +81,8 @@ class Camera2Controller(private val context: Context) {
 
         private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
         private const val BURST_CAPTURE_BATCH_SIZE = 8
+        private const val HDR_BRACKET_BASE_CAPTURE_COUNT = 3
+        private const val HDR_BRACKET_SIDE_FRAME_COUNT = 2
 
         // 拍照状态机常量
         private const val STATE_PREVIEW = 0 // Showing camera preview.
@@ -162,6 +163,7 @@ class Camera2Controller(private val context: Context) {
     private var isRawSupported = false
     private var isP010Supported = false
     private var isHlg10Supported = false
+    private var isZslControlSupported: Boolean? = null
     private var availableAeModes: IntArray = intArrayOf()
     private var availableAwbModes: IntArray = intArrayOf()
     private var videoCaptureStatsWindowStartMs: Long = 0L
@@ -210,7 +212,6 @@ class Camera2Controller(private val context: Context) {
     private var imageReaderMaxImages = SINGLE_CAPTURE_READER_MAX_IMAGES
 
     private var burstCapturing = false
-
     // 保留最近的一个结果作为后备
     @Volatile
     private var lastCaptureResult: TotalCaptureResult? = null
@@ -240,6 +241,7 @@ class Camera2Controller(private val context: Context) {
 
     // 图片拍摄回调（携带 CaptureInfo, CameraCharacteristics 和 CaptureResult 用于 RAW 处理）
     var onImageCaptured: ((SafeImage, CaptureInfo, CameraCharacteristics?, CaptureResult?) -> Unit)? = null
+    var onHdrBracketCaptureFailed: (() -> Unit)? = null
 
     private fun trackImage(image: Image?): SafeImage? {
         if (image != null) {
@@ -271,18 +273,26 @@ class Camera2Controller(private val context: Context) {
             _state.value = _state.value.copy(isCapturing = false)
         }
         if (count == 0) {
-            _state.value = _state.value.copy(isCapturing = false)
+            _state.value = _state.value.copy(
+                isCapturing = false,
+                hdrBracketCapturing = false,
+                hdrBracketFrameCount = 0
+            )
             checkAndClosePendingReaders()
         }
     }
 
     private fun resolveImageReaderMaxImages(): Int {
         val currentState = _state.value
+        val multiFrameCount = currentState.multiFrameCount.coerceIn(
+            MultiFrameConfig.MIN_FRAME_COUNT,
+            MultiFrameConfig.MAX_FRAME_COUNT
+        )
         val requestedImages = when {
-            currentState.useMFNR || currentState.useMFSR -> currentState.multiFrameCount.coerceIn(
-                MultiFrameConfig.MIN_FRAME_COUNT,
-                MultiFrameConfig.MAX_FRAME_COUNT
-            )
+            currentState.useHdrComposition && (currentState.useMFNR || currentState.useMFSR) ->
+                multiFrameCount + HDR_BRACKET_SIDE_FRAME_COUNT
+
+            currentState.useMFNR || currentState.useMFSR -> multiFrameCount
 
             else -> BURST_CAPTURE_BATCH_SIZE
         }
@@ -293,6 +303,8 @@ class Camera2Controller(private val context: Context) {
         val currentState = _state.value
         return when {
             currentState.burstCapturing -> BURST_CAPTURE_BATCH_SIZE
+            currentState.hdrBracketCapturing -> currentState.hdrBracketFrameCount
+                .coerceAtLeast(HDR_BRACKET_BASE_CAPTURE_COUNT)
             currentState.useMFNR || currentState.useMFSR -> currentState.multiFrameCount.coerceIn(
                 MultiFrameConfig.MIN_FRAME_COUNT,
                 MultiFrameConfig.MAX_FRAME_COUNT
@@ -932,6 +944,7 @@ class Camera2Controller(private val context: Context) {
                             }
                             val rawImage = when {
                                 state.value.burstCapturing -> reader.acquireNextImage()
+                                state.value.hdrBracketCapturing -> reader.acquireNextImage()
                                 state.value.useMFNR -> reader.acquireNextImage()
                                 state.value.useMFSR -> reader.acquireNextImage()
                                 else -> reader.acquireLatestImage()
@@ -957,12 +970,20 @@ class Camera2Controller(private val context: Context) {
                                 }
                             } else {
                                 PLog.w(TAG, "acquireNextImage() returned null, resetting capture state")
-                                _state.value = _state.value.copy(isCapturing = false)
+                                _state.value = _state.value.copy(
+                                    isCapturing = false,
+                                    hdrBracketCapturing = false,
+                                    hdrBracketFrameCount = 0
+                                )
                                 resetPreviewAfterCapture()
                             }
                         } catch (e: Exception) {
                             PLog.e(TAG, "Error in onImageAvailable", e)
-                            _state.value = _state.value.copy(isCapturing = false)
+                            _state.value = _state.value.copy(
+                                isCapturing = false,
+                                hdrBracketCapturing = false,
+                                hdrBracketFrameCount = 0
+                            )
                             resetPreviewAfterCapture()
                         }
                     }, cameraHandler)
@@ -1499,6 +1520,32 @@ class Camera2Controller(private val context: Context) {
                 CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON
             )
         }
+
+        setZslDisabledIfSupported(builder)
+    }
+
+    private fun setZslDisabledIfSupported(builder: CaptureRequest.Builder) {
+        if (!isZslControlAvailable()) return
+
+        builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false)
+    }
+
+    private fun isZslControlAvailable(): Boolean {
+        isZslControlSupported?.let { return it }
+        val supported = try {
+            cachedCharacteristics
+                ?.availableCaptureRequestKeys
+                ?.contains(CaptureRequest.CONTROL_ENABLE_ZSL)
+                ?: true
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to query available capture request keys for ZSL control", e)
+            true
+        }
+        isZslControlSupported = supported
+        if (!supported) {
+            PLog.i(TAG, "CONTROL_ENABLE_ZSL is not listed in available capture request keys")
+        }
+        return supported
     }
 
     /**
@@ -1618,129 +1665,6 @@ class Camera2Controller(private val context: Context) {
                 }
             }
         }
-    }
-
-    private fun resolveCaptureExposureCompensation(state: CameraState, droExposureReductionEv: Float): Int {
-        if (droExposureReductionEv <= 0f) return state.exposureCompensation
-        val evStep = state.getExposureCompensationStep().takeIf { it > 0f } ?: return state.exposureCompensation
-        val droSteps = (droExposureReductionEv / evStep).roundToInt()
-        val range = state.getExposureCompensationRange()
-        val adjusted = (state.exposureCompensation - droSteps).coerceIn(range.lower, range.upper)
-        PLog.d(TAG, "RAW DRO ${state.droMode} AE compensation adjusted: ${state.exposureCompensation} -> $adjusted")
-        return adjusted
-    }
-
-    private fun calculateDroAdjustedExposure(state: CameraState): Pair<Int, Long> {
-        val droExposureReductionEv = if (state.useRaw && state.captureMode == CaptureMode.PHOTO) {
-            DROMode.fromPersistedName(state.droMode).captureExposureReductionEv
-        } else {
-            0f
-        }
-
-        if (droExposureReductionEv <= 0f) return Pair(state.iso, state.shutterSpeed)
-
-        var remainingEv = droExposureReductionEv.toDouble()
-        var targetIso = state.iso
-        var targetShutter = state.shutterSpeed
-
-        val isoRange = state.getIsoRange()
-        val shutterRange = state.getShutterSpeedRange()
-
-        if (state.iso > 200) {
-            // Prioritize ISO reduction
-            val maxIsoReductionEv = ln(targetIso.toDouble() / isoRange.lower.toDouble()) / ln(2.0)
-            val isoReductionEv = remainingEv.coerceAtMost(maxIsoReductionEv)
-            if (isoReductionEv > 0) {
-                targetIso = (targetIso / 2.0.pow(isoReductionEv)).roundToInt().coerceIn(isoRange.lower, isoRange.upper)
-                remainingEv -= isoReductionEv
-            }
-
-            if (remainingEv > 0.01) {
-                val maxShutterReductionEv = ln(targetShutter.toDouble() / shutterRange.lower.toDouble()) / ln(2.0)
-                val shutterReductionEv = remainingEv.coerceAtMost(maxShutterReductionEv)
-                if (shutterReductionEv > 0) {
-                    targetShutter = (targetShutter / 2.0.pow(shutterReductionEv)).toLong().coerceIn(shutterRange.lower, shutterRange.upper)
-                    remainingEv -= shutterReductionEv
-                }
-            }
-        } else {
-            // Prioritize Shutter reduction
-            val maxShutterReductionEv = ln(targetShutter.toDouble() / shutterRange.lower.toDouble()) / ln(2.0)
-            val shutterReductionEv = remainingEv.coerceAtMost(maxShutterReductionEv)
-            if (shutterReductionEv > 0) {
-                targetShutter = (targetShutter / 2.0.pow(shutterReductionEv)).toLong().coerceIn(shutterRange.lower, shutterRange.upper)
-                remainingEv -= shutterReductionEv
-            }
-
-            if (remainingEv > 0.01) {
-                val maxIsoReductionEv = ln(targetIso.toDouble() / isoRange.lower.toDouble()) / ln(2.0)
-                val isoReductionEv = remainingEv.coerceAtMost(maxIsoReductionEv)
-                if (isoReductionEv > 0) {
-                    targetIso = (targetIso / 2.0.pow(isoReductionEv)).roundToInt().coerceIn(isoRange.lower, isoRange.upper)
-                    remainingEv -= isoReductionEv
-                }
-            }
-        }
-        return Pair(targetIso, targetShutter)
-    }
-
-    private fun calculateRawMinShutterAdjustedExposure(
-        state: CameraState,
-        baseIso: Int,
-        baseShutter: Long
-    ): Pair<Int, Long> {
-        if (!shouldApplyRawMinShutterLimit(state)) {
-            return Pair(baseIso, baseShutter)
-        }
-        if (baseIso <= 0 || baseShutter <= 0L) return Pair(baseIso, baseShutter)
-
-        val isoRange = state.getIsoRange()
-        val shutterRange = state.getShutterSpeedRange()
-        val targetShutterLimit = state.rawMinShutterSpeedNs.coerceIn(shutterRange.lower, shutterRange.upper)
-        if (baseShutter == targetShutterLimit) return Pair(baseIso, baseShutter)
-
-        val exposureProduct = baseIso.toDouble() * baseShutter.toDouble()
-        val adjusted = if (baseShutter < targetShutterLimit) {
-            if (baseIso <= isoRange.lower) {
-                Pair(baseIso, baseShutter)
-            } else {
-                val isoAtLimit = (exposureProduct / targetShutterLimit).roundToInt()
-                if (isoAtLimit >= isoRange.lower) {
-                    Pair(isoAtLimit.coerceIn(isoRange.lower, isoRange.upper), targetShutterLimit)
-                } else {
-                    val shutterAtMinIso = (exposureProduct / isoRange.lower).roundToLong()
-                        .coerceIn(baseShutter, targetShutterLimit)
-                        .coerceIn(shutterRange.lower, shutterRange.upper)
-                    Pair(isoRange.lower, shutterAtMinIso)
-                }
-            }
-        } else {
-            val isoAtLimit = (exposureProduct / targetShutterLimit).roundToInt()
-            if (isoAtLimit <= isoRange.upper) {
-                Pair(isoAtLimit.coerceIn(isoRange.lower, isoRange.upper), targetShutterLimit)
-            } else {
-                val shutterAtMaxIso = (exposureProduct / isoRange.upper).roundToLong()
-                    .coerceIn(targetShutterLimit, baseShutter)
-                    .coerceIn(shutterRange.lower, shutterRange.upper)
-                Pair(isoRange.upper, shutterAtMaxIso)
-            }
-        }
-
-        if (adjusted.first != baseIso || adjusted.second != baseShutter) {
-            PLog.d(
-                TAG,
-                "RAW min shutter override: ISO=$baseIso->${adjusted.first}, shutter=$baseShutter->${adjusted.second}, min=$targetShutterLimit"
-            )
-        }
-        return adjusted
-    }
-
-    private fun shouldApplyRawMinShutterLimit(state: CameraState): Boolean {
-        return state.useRaw &&
-                state.captureMode == CaptureMode.PHOTO &&
-                state.rawMinShutterSpeedNs > 0L &&
-                state.isIsoAuto &&
-                state.isShutterSpeedAuto
     }
 
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
@@ -2277,12 +2201,6 @@ class Camera2Controller(private val context: Context) {
         val resolvedValue = value.coerceAtLeast(0L)
         _state.value = _state.value.copy(rawMinShutterSpeedNs = resolvedValue)
         PLog.d(TAG, "RAW 最低快门速度: $resolvedValue ns")
-    }
-
-    fun setDroMode(mode: String) {
-        val resolvedMode = DROMode.fromPersistedName(mode).name
-        _state.value = _state.value.copy(droMode = resolvedMode)
-        PLog.d(TAG, "RAW DRO mode: $resolvedMode")
     }
 
     /**
@@ -3542,8 +3460,23 @@ class Camera2Controller(private val context: Context) {
         _state.value = _state.value.copy(useMFNR = useMultiFrame)
     }
 
+    fun setUseHdrComposition(useHdrComposition: Boolean) {
+        _state.value = _state.value.copy(useHdrComposition = useHdrComposition)
+    }
+
     fun setUseMFSR(useSuperResolution: Boolean) {
         _state.value = _state.value.copy(useMFSR = useSuperResolution)
+    }
+
+    fun setUseMultipleExposure(useMultipleExposure: Boolean) {
+        _state.value = _state.value.copy(useMultipleExposure = useMultipleExposure)
+    }
+
+    fun onHdrBracketFramesCollected() {
+        _state.value = _state.value.copy(
+            hdrBracketCapturing = false,
+            hdrBracketFrameCount = 0
+        )
     }
 
     fun setMultiFrameCount(multiFrameCount: Int) {
@@ -3563,7 +3496,6 @@ class Camera2Controller(private val context: Context) {
     fun setApplyUltraHDR(enabled: Boolean) {
         _state.value = _state.value.copy(applyUltraHDR = enabled)
     }
-
 
 // ==================== 拍照 ====================
 
@@ -3625,12 +3557,287 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    fun captureHdrBracket(zeroEvFrameCount: Int? = null) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                captureHdrBracket(zeroEvFrameCount)
+            }
+            return
+        }
+        if (_state.value.captureMode != CaptureMode.PHOTO) {
+            onHdrBracketCaptureFailed?.invoke()
+            return
+        }
+        val device = cameraDevice
+        val reader = imageReader
+        val session = captureSession
+        if (device == null || reader == null || session == null) {
+            onHdrBracketCaptureFailed?.invoke()
+            return
+        }
+        lastCaptureResult = null
+        performHdrBracketCapture(
+            device = device,
+            reader = reader,
+            session = session,
+            zeroEvFrameCount = zeroEvFrameCount ?: resolveHdrBracketZeroEvFrameCount(_state.value),
+            playShutterSound = true
+        )
+    }
+
+    private fun performHdrBracketCapture(
+        device: CameraDevice,
+        reader: ImageReader,
+        session: CameraCaptureSession,
+        zeroEvFrameCount: Int,
+        playShutterSound: Boolean
+    ) {
+        val isRawCapture = isRawCaptureReader(reader)
+        val normalizedZeroEvFrameCount = zeroEvFrameCount.coerceIn(
+            1,
+            MultiFrameConfig.MAX_FRAME_COUNT
+        )
+        val hdrFrameCount = normalizedZeroEvFrameCount + HDR_BRACKET_SIDE_FRAME_COUNT
+        _state.value = _state.value.copy(
+            isCapturing = true,
+            hdrBracketCapturing = true,
+            hdrBracketFrameCount = hdrFrameCount
+        )
+
+        try {
+            if (playShutterSound && !_state.value.useLivePhoto) {
+                onPlayShutterSound?.invoke()
+            }
+            val currentState = _state.value
+            val manualBaseExposure = resolveHdrBracketManualBaseExposure(currentState)
+            val evOffsets = buildList {
+                add(-2f)
+                repeat(normalizedZeroEvFrameCount) {
+                    add(0f)
+                }
+                add(2f)
+            }
+            val requests = evOffsets.mapIndexed { index, evOffset ->
+                device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                    addTarget(reader.surface)
+                    applyBaseCameraSettings(this, isCapture = true, isRawCapture = isRawCapture)
+                    applyHdrBracketExposure(this, currentState, evOffset, manualBaseExposure)
+                    set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
+                    set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                    if (currentState.awbMode != CameraMetadata.CONTROL_AWB_MODE_OFF) {
+                        set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                    }
+                    copyStillFocusSettingsFromPreview(this)
+                    PLog.d(TAG, "HDR bracket request[$index]: ev=$evOffset, manual=${manualBaseExposure != null}")
+                }.build()
+            }
+
+            session.captureBurst(requests, object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureStarted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    timestamp: Long,
+                    frameNumber: Long
+                ) {
+                    if (isRawCapture) {
+                        pendingCaptureStartedTimestamps[frameNumber] = timestamp
+                    }
+                    PLog.d(TAG, "HDR bracket capture started: frame=$frameNumber")
+                }
+
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    val timestamp = getCaptureTimestamp(result)
+                    if (timestamp != null && isRawCapture) {
+                        val pendingImage = pendingImages.remove(timestamp)
+                        if (pendingImage != null) {
+                            processAndTriggerCapture(pendingImage, result)
+                        } else {
+                            pendingResults[timestamp] = result
+                        }
+                    }
+                    lastCaptureResult = result
+                }
+
+                override fun onCaptureSequenceCompleted(
+                    session: CameraCaptureSession,
+                    sequenceId: Int,
+                    frameNumber: Long
+                ) {
+                    super.onCaptureSequenceCompleted(session, sequenceId, frameNumber)
+                    PLog.d(TAG, "HDR bracket sequence completed")
+                    resetPreviewAfterCapture()
+                }
+
+                override fun onCaptureFailed(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    failure: CaptureFailure
+                ) {
+                    PLog.e(TAG, "HDR bracket capture failed: ${failure.reason}")
+                    _state.value = _state.value.copy(
+                        isCapturing = false,
+                        hdrBracketCapturing = false,
+                        hdrBracketFrameCount = 0
+                    )
+                    onHdrBracketCaptureFailed?.invoke()
+                    resetPreviewAfterCapture()
+                }
+            }, cameraHandler)
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to capture HDR bracket", e)
+            _state.value = _state.value.copy(
+                isCapturing = false,
+                hdrBracketCapturing = false,
+                hdrBracketFrameCount = 0
+            )
+            onHdrBracketCaptureFailed?.invoke()
+            resetPreviewAfterCapture()
+        }
+    }
+
     /**
      * 执行实际的拍照操作
      */
+    private fun resolveHdrBracketManualBaseExposure(state: CameraState): Pair<Int, Long>? {
+        if (!isManualSensorSupported || !availableAeModes.contains(CaptureRequest.CONTROL_AE_MODE_OFF)) {
+            return null
+        }
+        val result = lastCaptureResult
+        val baseIso = if (state.isAutoExposure) {
+            result?.get(CaptureResult.SENSOR_SENSITIVITY)
+        } else {
+            state.iso
+        } ?: return null
+        val baseShutter = if (state.isAutoExposure) {
+            result?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+        } else {
+            state.shutterSpeed
+        } ?: return null
+        if (baseIso <= 0 || baseShutter <= 0L) return null
+        return Pair(baseIso, baseShutter)
+    }
+
+    private fun applyHdrBracketExposure(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        evOffset: Float,
+        manualBaseExposure: Pair<Int, Long>?
+    ) {
+        if (manualBaseExposure != null) {
+            val (iso, shutter) = calculateHdrBracketManualExposure(
+                baseIso = manualBaseExposure.first,
+                baseShutter = manualBaseExposure.second,
+                evOffset = evOffset,
+                state = state
+            )
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutter)
+            PLog.d(TAG, "HDR bracket manual exposure: ev=$evOffset, ISO=$iso, shutter=$shutter")
+            return
+        }
+
+        val compensation = calculateHdrBracketExposureCompensation(state, evOffset)
+        builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, compensation)
+        PLog.d(TAG, "HDR bracket AE compensation: ev=$evOffset, compensation=$compensation")
+    }
+
+    private fun calculateHdrBracketManualExposure(
+        baseIso: Int,
+        baseShutter: Long,
+        evOffset: Float,
+        state: CameraState
+    ): Pair<Int, Long> {
+        val isoRange = state.getIsoRange()
+        val shutterRange = state.getShutterSpeedRange()
+        val multiplier = 2.0.pow(evOffset.toDouble())
+        val targetProduct = baseIso.toDouble() * baseShutter.toDouble() * multiplier
+
+        val shutterFirst = (baseShutter.toDouble() * multiplier)
+            .roundToLong()
+            .coerceIn(shutterRange.lower, shutterRange.upper)
+        val isoForShutter = (targetProduct / shutterFirst.toDouble())
+            .roundToInt()
+            .coerceIn(isoRange.lower, isoRange.upper)
+        val shutterForIso = (targetProduct / isoForShutter.toDouble())
+            .roundToLong()
+            .coerceIn(shutterRange.lower, shutterRange.upper)
+
+        return Pair(isoForShutter, shutterForIso)
+    }
+
+    private fun calculateHdrBracketExposureCompensation(state: CameraState, evOffset: Float): Int {
+        val evStep = state.getExposureCompensationStep().takeIf { it > 0f } ?: return state.exposureCompensation
+        val range = state.getExposureCompensationRange()
+        val steps = (evOffset / evStep).roundToInt()
+        return (state.exposureCompensation + steps).coerceIn(range.lower, range.upper)
+    }
+
+    private fun copyStillFocusSettingsFromPreview(builder: CaptureRequest.Builder) {
+        previewRequestBuilder?.let { preview ->
+            preview.get(CaptureRequest.CONTROL_AF_MODE)?.let {
+                builder.set(CaptureRequest.CONTROL_AF_MODE, it)
+            }
+            preview.get(CaptureRequest.LENS_FOCUS_DISTANCE)?.let {
+                builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, it)
+            }
+            preview.get(CaptureRequest.CONTROL_AF_REGIONS)?.let {
+                builder.set(CaptureRequest.CONTROL_AF_REGIONS, it)
+            }
+            preview.get(CaptureRequest.CONTROL_AE_REGIONS)?.let {
+                builder.set(CaptureRequest.CONTROL_AE_REGIONS, it)
+            }
+        }
+    }
+
+    private fun shouldUseDefaultHdrBracketCapture(state: CameraState, isRawCapture: Boolean): Boolean {
+        return state.captureMode == CaptureMode.PHOTO &&
+                state.useHdrComposition &&
+                !state.burstCapturing &&
+                !state.hdrBracketCapturing &&
+                !state.useMultipleExposure &&
+                !state.useLivePhoto &&
+                (isRawCapture || !state.useRaw || !isRawSupported)
+    }
+
+    private fun resolveHdrBracketZeroEvFrameCount(state: CameraState): Int {
+        return if (state.useMFNR || state.useMFSR) {
+            state.multiFrameCount.coerceIn(
+                MultiFrameConfig.MIN_FRAME_COUNT,
+                MultiFrameConfig.MAX_FRAME_COUNT
+            )
+        } else {
+            1
+        }
+    }
+
     private fun performCapture(device: CameraDevice, reader: ImageReader) {
         try {
             val isRawCapture = isRawCaptureReader(reader)
+            val currentState = _state.value
+            if (shouldUseDefaultHdrBracketCapture(currentState, isRawCapture)) {
+                val session = captureSession ?: run {
+                    PLog.e(TAG, "Failed to capture HDR bracket: capture session unavailable")
+                    _state.value = _state.value.copy(isCapturing = false)
+                    onHdrBracketCaptureFailed?.invoke()
+                    return
+                }
+                PLog.d(TAG, "Default YUV HDR bracket capture")
+                performHdrBracketCapture(
+                    device = device,
+                    reader = reader,
+                    session = session,
+                    zeroEvFrameCount = resolveHdrBracketZeroEvFrameCount(currentState),
+                    playShutterSound = false
+                )
+                return
+            }
 
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
@@ -3645,38 +3852,6 @@ class Camera2Controller(private val context: Context) {
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
                 // isCapture = true 确保使用完整的曝光时间（不限制长曝光）
                 applyBaseCameraSettings(this, isCapture = true, isRawCapture = isRawCapture)
-
-                // 强制手动控制 RAW 拍摄曝光调整 (覆盖 applyBaseCameraSettings 中的 AE 设置)
-                if (state.value.useRaw && state.value.captureMode == CaptureMode.PHOTO) {
-                    val droExposureReductionEv = DROMode.fromPersistedName(state.value.droMode).captureExposureReductionEv
-                    val minShutterEnabled = shouldApplyRawMinShutterLimit(state.value)
-                    if (droExposureReductionEv > 0f || minShutterEnabled) {
-                        if (isManualSensorSupported) {
-                            val (droIso, droShutter) = calculateDroAdjustedExposure(_state.value)
-                            val (adjustedIso, adjustedShutter) = calculateRawMinShutterAdjustedExposure(
-                                _state.value,
-                                droIso,
-                                droShutter
-                            )
-                            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                            set(CaptureRequest.SENSOR_SENSITIVITY, adjustedIso)
-                            set(CaptureRequest.SENSOR_EXPOSURE_TIME, adjustedShutter)
-                            PLog.d(
-                                TAG,
-                                "Capture RAW exposure override (Manual): DRO=${state.value.droMode}, minShutter=${state.value.rawMinShutterSpeedNs}, ISO=$adjustedIso, shutter=$adjustedShutter"
-                            )
-                        } else if (droExposureReductionEv > 0f && state.value.isIsoAuto && state.value.isShutterSpeedAuto) {
-                            val adjustedCompensation = resolveCaptureExposureCompensation(state.value, droExposureReductionEv)
-                            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, adjustedCompensation)
-                            PLog.d(
-                                TAG,
-                                "Capture DRO ${state.value.droMode} override (AE Compensation): $adjustedCompensation"
-                            )
-                        } else if (state.value.rawMinShutterSpeedNs > 0L && state.value.isAutoExposure) {
-                            PLog.w(TAG, "RAW min shutter requires MANUAL_SENSOR support")
-                        }
-                    }
-                }
 
                 // 强制将此请求的触发器设为 IDLE，防止携带预览中的触发状态
                 set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)
@@ -4022,6 +4197,7 @@ class Camera2Controller(private val context: Context) {
             cachedHardwareLevel = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
             availableAfModes = intArrayOf()
             lastAfState = null
+            isZslControlSupported = null
 
             _state.value = if (keepVideoRecording) {
                 _state.value.copy(isPreviewActive = false)

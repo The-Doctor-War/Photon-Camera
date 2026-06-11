@@ -47,9 +47,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.FilterNone
@@ -1348,7 +1345,6 @@ fun SettingsScreen(
                         rawNlmNoiseFactor = rawNlmNoiseFactorUi,
                         rawExposureCompensation = rawExposureCompensationUi,
                         rawAutoExposure = rawAutoExposure,
-                        rawDROMode = droMode,
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
                         spectralFilmEnabled = rawSpectralFilmEnabled,
@@ -1368,7 +1364,6 @@ fun SettingsScreen(
                         onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
                         onRawExposureCompensationChange = { rawExposureCompensationUi = it },
                         onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
-                        onRawDROModeChange = { viewModel.setDroMode(it) },
                         onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
                         onSpectralFilmEnabledChange = { enabled ->
