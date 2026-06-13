@@ -157,8 +157,8 @@ object ShadowsHighlightsShader {
         }
 
         vec3 applyShadowsHighlights(vec3 inputColor, vec2 uv) {
-            float highlights = 2.0 * clamp(uHighlights, -1.0, 1.0);
-            float shadows = 2.0 * clamp(uShadows, -1.0, 1.0);
+            float highlights = 1.6 * clamp(uHighlights, -1.0, 1.0);
+            float shadows = 1.6 * clamp(uShadows, -1.0, 1.0);
             if (abs(highlights) < 0.001 && abs(shadows) < 0.001) {
                 return inputColor;
             }

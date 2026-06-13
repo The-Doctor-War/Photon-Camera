@@ -9,6 +9,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
  * 评价测光与场景分析系统
@@ -30,17 +31,12 @@ object MeteringSystem {
     private const val RAW_CURVE_NEUTRAL_WHITE_POINT = 1.0f
     private const val AUTO_DEVELOP_EPSILON = 0.0001f
     private const val AUTO_CLIP_FRACTION = 0.0002f
-    private const val RAW_AUTO_HIGHLIGHT_LIMIT = 0.85f
-    private const val RAW_AUTO_STANDARD_SHADOW_LIMIT = 0.30f
-    private const val RAW_AUTO_HDR_SHADOW_LIMIT = 0.50f
+    private const val RAW_AUTO_HIGHLIGHT_LIMIT = 0.95f
+    private const val RAW_AUTO_STANDARD_SHADOW_LIMIT = 0.45f
+    private const val RAW_AUTO_HDR_SHADOW_LIMIT = 0.9f
     private const val RAW_AUTO_HDR_BASELINE_START = 1.0f
     private const val RAW_AUTO_HDR_BASELINE_FULL = 2.0f
-    private const val RAW_AUTO_HIGHLIGHT_RATIO_START = 0.02f
-    private const val RAW_AUTO_HIGHLIGHT_RATIO_FULL = 0.30f
-    private const val RAW_AUTO_SHADOW_DEFECT_START = 0.04f
-    private const val RAW_AUTO_SHADOW_DEFECT_FULL = 0.38f
-    private const val RAW_AUTO_DEEP_SHADOW_RATIO_START = 0.02f
-    private const val RAW_AUTO_DEEP_SHADOW_RATIO_FULL = 0.22f
+    private const val RAW_AUTO_FULL_ADJUSTMENT_EV = 1.6f
     private const val RAW_AUTO_LOW_KEY_P75_RATIO_FULL = 0.45f
     private const val RAW_AUTO_LOW_KEY_P75_RATIO_START = 0.85f
     private const val RAW_AUTO_LOW_KEY_P90_RATIO_FULL = 0.70f
@@ -48,8 +44,9 @@ object MeteringSystem {
     private const val RAW_AUTO_LOW_KEY_MAX_SHADOW_ATTENUATION = 0.78f
     private const val MERTENS_WELL_EXPOSED_CENTER = 0.5f
     private const val MERTENS_WELL_EXPOSED_SIGMA = 0.2f
-    private const val MERTENS_HIGHLIGHT_CLIP_INTENSITY = 0.92f
-    private const val MERTENS_SHADOW_BLOCK_INTENSITY = 0.08f
+    private const val MERTENS_MIN_TONE_WEIGHT = 0.0001f
+    private const val MERTENS_EV_INTENSITY_FLOOR = 0.0005f
+    private val MERTENS_VIRTUAL_EXPOSURE_EVS = floatArrayOf(-2f, -1f, 0f, 1f, 2f)
 
 
     data class MeteringResult(
@@ -130,10 +127,10 @@ object MeteringSystem {
     )
 
     private data class ExposureFusionToneStats(
-        val highlightDefect: Float,
-        val shadowDefect: Float,
-        val clippedHighlightRatio: Float,
-        val blockedShadowRatio: Float
+        val highlightAdjustmentEv: Float,
+        val shadowAdjustmentEv: Float,
+        val highlightRegionWeight: Float,
+        val shadowRegionWeight: Float
     )
 
 
@@ -144,7 +141,6 @@ object MeteringSystem {
         width: Int,
         height: Int,
         weightBuffer: ByteBuffer? = null, // Optional weight mask (e.g. depth map)
-        linearExposureGain: Float,
         baselineExposure: Float = 0f
     ): MeteringResult {
         return analyzeExposureEv(
@@ -152,7 +148,6 @@ object MeteringSystem {
             height = height,
             weightBuffer = weightBuffer,
             targetLuma = DISPLAY_TARGET_LUMA * 2f.pow(-ACR3_AVERAGE_TONE_CURVE_EV),
-            linearExposureGain = linearExposureGain,
             baselineExposure = baselineExposure,
             tag = "Linear RAW AE"
         ) { index ->
@@ -179,7 +174,6 @@ object MeteringSystem {
         height: Int,
         weightBuffer: ByteBuffer?,
         targetLuma: Float,
-        linearExposureGain: Float,
         baselineExposure: Float,
         tag: String,
         lumaAt: (Int) -> Float
@@ -221,12 +215,12 @@ object MeteringSystem {
         val p99 = percentile(lumas, 0.99f)
         val clipHigh = percentile(lumas, 1f - AUTO_CLIP_FRACTION)
 
-        val highlightAnchorGain = maxOf(linearExposureGain, clipHigh) / clipHigh.coerceAtLeast(0.01f)
+        val highlightAnchorGain = maxOf(1f, clipHigh) / clipHigh.coerceAtLeast(0.01f)
         val midToneGain = targetLuma / midToneLuma.coerceAtLeast(LUMA_FLOOR)
         val dynamicRangeGap = evDifference(clipHigh, clipLow)
 
         val extra = smoothStep(4f, 12f, dynamicRangeGap)
-        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain, extra)
+        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain * 1.1f, extra)
         val rawMeteredEv = log2(adaptiveGain.coerceIn(0.25f, 4.0f))
 
         val compensatedExposureScale = exp2(rawMeteredEv)
@@ -242,12 +236,7 @@ object MeteringSystem {
             exposureScale = compensatedExposureScale,
             targetLuma = targetLuma
         )
-        val highlights = -calculateAutoHighlightCompression(
-            maxOf(
-                exposureFusionToneStats.highlightDefect,
-                exposureFusionToneStats.clippedHighlightRatio
-            )
-        )
+        val highlights = -calculateAutoHighlightCompression(exposureFusionToneStats.highlightAdjustmentEv)
         val shadowLimit = resolveAutoShadowLimit(baselineExposure)
         val unprotectedShadows = calculateAutoShadowLift(
             stats = exposureFusionToneStats,
@@ -279,10 +268,10 @@ object MeteringSystem {
                 "compClipLow=$compensatedClipLow compClipHigh=$compensatedClipHigh " +
                 "compP05=$compensatedP05 compP25=$compensatedP25 " +
                 "compP75=$compensatedP75 compP90=$compensatedP90 compP99=$compensatedP99 " +
-                "highlightDefect=${exposureFusionToneStats.highlightDefect} " +
-                "shadowDefect=${exposureFusionToneStats.shadowDefect} " +
-                "clippedHighlightRatio=${exposureFusionToneStats.clippedHighlightRatio} " +
-                "blockedShadowRatio=${exposureFusionToneStats.blockedShadowRatio} " +
+                "highlightAdjustmentEv=${exposureFusionToneStats.highlightAdjustmentEv} " +
+                "shadowAdjustmentEv=${exposureFusionToneStats.shadowAdjustmentEv} " +
+                "highlightRegionWeight=${exposureFusionToneStats.highlightRegionWeight} " +
+                "shadowRegionWeight=${exposureFusionToneStats.shadowRegionWeight} " +
                 "lowKeyShadowProtection=$lowKeyShadowProtection " +
                 "baselineExposure=$baselineExposure shadowLimit=$shadowLimit " +
                 "highlights=$highlights shadows=$shadows unprotectedShadows=$unprotectedShadows " +
@@ -709,10 +698,10 @@ object MeteringSystem {
     ): ExposureFusionToneStats {
         if (sortedLumas.isEmpty()) {
             return ExposureFusionToneStats(
-                highlightDefect = 0f,
-                shadowDefect = 0f,
-                clippedHighlightRatio = 0f,
-                blockedShadowRatio = 0f
+                highlightAdjustmentEv = 0f,
+                shadowAdjustmentEv = 0f,
+                highlightRegionWeight = 0f,
+                shadowRegionWeight = 0f
             )
         }
 
@@ -721,40 +710,98 @@ object MeteringSystem {
         } else {
             1f
         }
-        var highlightDefectSum = 0.0
-        var shadowDefectSum = 0.0
-        var clippedHighlightCount = 0
-        var blockedShadowCount = 0
+        var highlightEvEnergySum = 0.0
+        var shadowEvEnergySum = 0.0
+        var highlightWeightSum = 0.0
+        var shadowWeightSum = 0.0
         for (luma in sortedLumas) {
-            val intensity = linearLumaToExposureFusionIntensity(
-                luma = luma * safeExposureScale,
+            val baseLuma = sanitizeLinearLuma(luma * safeExposureScale)
+            val baseIntensity = linearLumaToExposureFusionIntensity(
+                luma = baseLuma,
                 targetLuma = targetLuma
             )
-            val defect = (1f - mertensWellExposedness(intensity)).coerceIn(0f, 1f)
-            if (intensity > MERTENS_WELL_EXPOSED_CENTER) {
-                val brightDistance = ((intensity - MERTENS_WELL_EXPOSED_CENTER) /
-                    (1f - MERTENS_WELL_EXPOSED_CENTER)).coerceIn(0f, 1f)
-                highlightDefectSum += (defect * brightDistance).toDouble()
-                if (intensity >= MERTENS_HIGHLIGHT_CLIP_INTENSITY) {
-                    clippedHighlightCount++
-                }
+            val fusedIntensity = calculateVirtualMertensFusionIntensity(
+                baseLuma = baseLuma,
+                targetLuma = targetLuma
+            )
+            val fusionDelta = fusedIntensity - baseIntensity
+            val highlightMask = smoothStep(
+                targetLuma,
+                0.78f,
+                baseIntensity
+            )
+            val shadowMask = 1f - smoothStep(
+                0.005f,
+                targetLuma,
+                baseIntensity
+            )
+            val highlightAdjustmentEv = if (fusionDelta < 0f) {
+                log2(baseIntensity.coerceAtLeast(MERTENS_EV_INTENSITY_FLOOR) /
+                    fusedIntensity.coerceAtLeast(MERTENS_EV_INTENSITY_FLOOR))
             } else {
-                val darkDistance = ((MERTENS_WELL_EXPOSED_CENTER - intensity) /
-                    MERTENS_WELL_EXPOSED_CENTER).coerceIn(0f, 1f)
-                shadowDefectSum += (defect * darkDistance).toDouble()
-                if (intensity <= MERTENS_SHADOW_BLOCK_INTENSITY) {
-                    blockedShadowCount++
-                }
+                0f
             }
+            val shadowAdjustmentEv = if (fusionDelta > 0f) {
+                log2(fusedIntensity.coerceAtLeast(MERTENS_EV_INTENSITY_FLOOR) /
+                    baseIntensity.coerceAtLeast(MERTENS_EV_INTENSITY_FLOOR))
+            } else {
+                0f
+            }
+            highlightEvEnergySum += (highlightAdjustmentEv * highlightAdjustmentEv * highlightMask).toDouble()
+            shadowEvEnergySum += (shadowAdjustmentEv * shadowAdjustmentEv * shadowMask).toDouble()
+            highlightWeightSum += highlightMask.toDouble()
+            shadowWeightSum += shadowMask.toDouble()
         }
 
         val sampleCount = sortedLumas.size.toFloat().coerceAtLeast(1f)
+        val highlightAdjustmentEv = if (highlightWeightSum > MERTENS_MIN_TONE_WEIGHT) {
+            sqrt(highlightEvEnergySum / highlightWeightSum)
+                .toFloat()
+                .coerceAtLeast(0f)
+        } else {
+            0f
+        }
+        val shadowAdjustmentEv = if (shadowWeightSum > MERTENS_MIN_TONE_WEIGHT) {
+            sqrt(shadowEvEnergySum / shadowWeightSum)
+                .toFloat()
+                .coerceAtLeast(0f)
+        } else {
+            0f
+        }
+
         return ExposureFusionToneStats(
-            highlightDefect = (highlightDefectSum / sampleCount).toFloat().coerceIn(0f, 1f),
-            shadowDefect = (shadowDefectSum / sampleCount).toFloat().coerceIn(0f, 1f),
-            clippedHighlightRatio = (clippedHighlightCount / sampleCount).coerceIn(0f, 1f),
-            blockedShadowRatio = (blockedShadowCount / sampleCount).coerceIn(0f, 1f)
+            highlightAdjustmentEv = highlightAdjustmentEv,
+            shadowAdjustmentEv = shadowAdjustmentEv,
+            highlightRegionWeight = (highlightWeightSum / sampleCount).toFloat().coerceIn(0f, 1f),
+            shadowRegionWeight = (shadowWeightSum / sampleCount).toFloat().coerceIn(0f, 1f)
         )
+    }
+
+    private fun calculateVirtualMertensFusionIntensity(
+        baseLuma: Float,
+        targetLuma: Float
+    ): Float {
+        val baseIntensity = linearLumaToExposureFusionIntensity(
+            luma = baseLuma,
+            targetLuma = targetLuma
+        )
+        var weightedIntensitySum = 0.0
+        var weightSum = 0.0
+        for (ev in MERTENS_VIRTUAL_EXPOSURE_EVS) {
+            val virtualIntensity = linearLumaToExposureFusionIntensity(
+                luma = baseLuma * exp2(ev),
+                targetLuma = targetLuma
+            )
+            val weight = mertensWellExposedness(virtualIntensity)
+            weightedIntensitySum += (virtualIntensity * weight).toDouble()
+            weightSum += weight.toDouble()
+        }
+
+        return if (weightSum > 0.0) {
+            (weightedIntensitySum / weightSum).toFloat().coerceIn(0f, 1f)
+        } else {
+            baseIntensity
+        }
     }
 
     private fun linearLumaToExposureFusionIntensity(
@@ -774,14 +821,9 @@ object MeteringSystem {
         return exp((-0.5f * offset * offset / sigma2).toDouble()).toFloat().coerceIn(0f, 1f)
     }
 
-    private fun calculateAutoHighlightCompression(highlightStress: Float): Float {
-        return (
-            smoothStep(
-                RAW_AUTO_HIGHLIGHT_RATIO_START,
-                RAW_AUTO_HIGHLIGHT_RATIO_FULL,
-                highlightStress.coerceIn(0f, 1f)
-            ) * RAW_AUTO_HIGHLIGHT_LIMIT
-        ).coerceIn(0f, RAW_AUTO_HIGHLIGHT_LIMIT)
+    private fun calculateAutoHighlightCompression(highlightAdjustmentEv: Float): Float {
+        return (highlightAdjustmentEv / RAW_AUTO_FULL_ADJUSTMENT_EV)
+            .coerceIn(0f, RAW_AUTO_HIGHLIGHT_LIMIT)
     }
 
     private fun resolveAutoShadowLimit(baselineExposure: Float): Float {
@@ -801,17 +843,8 @@ object MeteringSystem {
         stats: ExposureFusionToneStats,
         shadowLimit: Float
     ): Float {
-        val shadowLift = smoothStep(
-            RAW_AUTO_SHADOW_DEFECT_START,
-            RAW_AUTO_SHADOW_DEFECT_FULL,
-            stats.shadowDefect
-        ) * 0.42f
-        val deepShadowLift = smoothStep(
-            RAW_AUTO_DEEP_SHADOW_RATIO_START,
-            RAW_AUTO_DEEP_SHADOW_RATIO_FULL,
-            stats.blockedShadowRatio
-        ) * 0.23f
-        return (shadowLift + deepShadowLift).coerceIn(0f, shadowLimit.coerceAtLeast(0f))
+        return (stats.shadowAdjustmentEv / RAW_AUTO_FULL_ADJUSTMENT_EV)
+            .coerceIn(0f, shadowLimit.coerceAtLeast(0f))
     }
 
     private fun calculateLowKeyShadowProtection(

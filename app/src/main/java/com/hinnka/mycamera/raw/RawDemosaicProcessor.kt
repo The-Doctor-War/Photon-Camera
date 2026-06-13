@@ -3708,13 +3708,11 @@ class RawDemosaicProcessor {
                     }
                 }
 
-                val linearExposureGain = computeLinearExposureGain(metadata, 0f, dcpRenderPlan)
                 val meteringResult = MeteringSystem.analyzeLinearHalfFloatExposureEv(
                     pixelBuffer = linearPixels,
                     width = meteringWidth,
                     height = meteringHeight,
                     weightBuffer = weightBuffer,
-                    linearExposureGain = linearExposureGain,
                     baselineExposure = metadata.baselineExposure
                 )
 
