@@ -831,8 +831,11 @@ private class VideoLutShaderProgram(
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uTint"), currentRecipeParams.tint)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uFade"), currentRecipeParams.fade)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uVibrance"), currentRecipeParams.color)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uHighlights"), currentRecipeParams.highlights)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uShadows"), currentRecipeParams.shadows)
+            ShadowsHighlightsShader.bindUniforms(
+                programId,
+                currentRecipeParams.highlights,
+                currentRecipeParams.shadows
+            )
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uToneToe"), currentRecipeParams.toneToe)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uToneShoulder"), currentRecipeParams.toneShoulder)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(programId, "uTonePivot"), currentRecipeParams.tonePivot)

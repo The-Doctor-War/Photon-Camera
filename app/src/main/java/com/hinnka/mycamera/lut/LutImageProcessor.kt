@@ -729,8 +729,7 @@ class LutImageProcessor {
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uTint"), tint)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uFade"), fade)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uVibrance"), vibrance)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uHighlights"), highlights)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uShadows"), shadows)
+            ShadowsHighlightsShader.bindUniforms(program, highlights, shadows)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uToneToe"), toneToe)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uToneShoulder"), toneShoulder)
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uTonePivot"), tonePivot)
@@ -2432,6 +2431,42 @@ class LutImageProcessor {
                 );
             }
 
+            vec3 prepareToneSample(vec3 sampleColor) {
+                vec3 prepared = sampleColor;
+                if (uIsHlgInput) {
+                    prepared = hlgToLinear(prepared);
+                    prepared = linearToSrgb(prepared);
+                }
+                if (abs(uExposure) > 0.001) {
+                    prepared = applyExposureInLinearSpace(prepared, uExposure);
+                }
+                return sanitizeColor(prepared);
+            }
+
+            vec3 sampleToneSource(vec2 uv) {
+                return prepareToneSample(sampleImage(clamp(uv, vec2(0.0), vec2(1.0))).rgb);
+            }
+
+            vec3 shRgbToXyz(vec3 rgb) {
+                vec3 linearRgb = srgbToLinear(rgb);
+                return mat3(
+                    0.4360747, 0.2225045, 0.0139322,
+                    0.3850649, 0.7168786, 0.0971045,
+                    0.1430804, 0.0606169, 0.7141733
+                ) * linearRgb;
+            }
+
+            vec3 shXyzToRgb(vec3 xyz) {
+                vec3 linearRgb = mat3(
+                     3.1338561, -0.9787684,  0.0719453,
+                    -1.6168667,  1.9161415, -0.2289914,
+                    -0.4906146,  0.0334540,  1.4052427
+                ) * xyz;
+                return linearToSrgb(linearRgb);
+            }
+
+            ${ShadowsHighlightsShader.GLSL}
+
             float hash12(vec2 p) {
                 vec3 p3 = fract(vec3(p.xyx) * 0.1031);
                 p3 += dot(p3, p3.yzx + 33.33);
@@ -2866,24 +2901,8 @@ class LutImageProcessor {
                         color.rgb = sanitizeColor(color.rgb);
                     }
 
-                    // 2. 高光/阴影调整（分区调整，基于亮度 mask）
-                    float luma = getLuma(color.rgb);
-                    float highlightMask = smoothstep(0.5, 1.0, luma);
-                    float shadowMask = smoothstep(0.5, 0.0, luma);
-                    float highlightFactor;
-                    if (uHighlights > 0.0) {
-                        highlightFactor = 1.0 + uHighlights * 0.7;
-                    } else {
-                        highlightFactor = 1.0 + uHighlights * 0.3;
-                    }
-                    color.rgb = mix(color.rgb, color.rgb * highlightFactor, highlightMask);
-                    vec3 shadowTarget;
-                    if (uShadows > 0.0) {
-                        shadowTarget = mix(color.rgb, vec3(1.0) * luma, uShadows * 0.2) + (color.rgb * uShadows * 0.5);
-                    } else {
-                        shadowTarget = color.rgb * (1.0 + uShadows * 0.5);
-                    }
-                    color.rgb = mix(color.rgb, shadowTarget, shadowMask);
+                    // 2. 高光/阴影调整：RT 风格 tonal width + 局部 base mask，避免线性乘法洗白全图
+                    color.rgb = applyShadowsHighlights(color.rgb, uvCoord);
                     color.rgb = sanitizeColor(color.rgb);
 
                     // 3. 对比度（围绕中灰点调整）

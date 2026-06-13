@@ -1,5 +1,7 @@
 package com.hinnka.mycamera.raw
 
+import com.hinnka.mycamera.lut.ShadowsHighlightsShader
+
 /**
  * RAW 图像处理的 GLSL 着色器
  *
@@ -75,8 +77,8 @@ object RawShaders {
      * Process chain:
      * 1. Linear RGB input in working space
      * 2. DCP hue/sat map and look table
-     * 3. Unified SDR highlight tone mapping on working-linear data
-     * 4. DCP tone curve or ACR3 curve (mutually exclusive)
+     * 3. Shared local shadows/highlights in working RGB, before curve clipping
+     * 4. Highlight rolloff + DCP tone curve or ACR3 curve
      * 5. Working space -> Linear sRGB
      * 6. Linear sRGB -> sRGB
      */
@@ -90,16 +92,17 @@ object RawShaders {
         
         uniform sampler2D uInputTexture;
         uniform sampler2D uCurveTexture;
-        uniform sampler2D uHighlightBaseTexture;
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
         uniform sampler3D uSpectralFilmTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
-        uniform float uHighlightWhitePoint;
-        uniform float uHighlightExposureGain;
-        uniform bool uHighlightBaseEnabled;
+        uniform float uCurveWhitePoint;
+        uniform float uCurveShoulderStart;
+        uniform vec2 uTexelSize;
+        uniform float uHighlights;
+        uniform float uShadows;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
         uniform bool uSpectralFilmEnabled;
@@ -325,7 +328,8 @@ object RawShaders {
                 tableHsv.z = linearToSrgb(vec3(hsv.z)).r;
             }
 
-            vec3 modify = sampleDcpMap(tableTexture, divisions, tableHsv);
+            vec3 lookupHsv = vec3(tableHsv.x, tableHsv.y, clamp(tableHsv.z, 0.0, 1.0));
+            vec3 modify = sampleDcpMap(tableTexture, divisions, lookupHsv);
             hsv.x = mod(hsv.x + (modify.x * 6.0 / 360.0), 6.0);
             hsv.y = hsv.y * modify.y;
             if (encoding == 1) {
@@ -338,22 +342,6 @@ object RawShaders {
             hsv.z = max(hsv.z, 0.0);
 
             return dcpHsvToRgb(hsv);
-        }
-
-        float highlightShoulderLuma(float luma) {
-            if (uHighlightWhitePoint <= 1.0) return luma;
-
-            float start = 0.4;
-            if (luma <= start) return luma;
-
-            float x = (luma - start) / max(uHighlightWhitePoint - start, 1e-6);
-
-            float y = x *
-                (1.0 + x / uHighlightWhitePoint) /
-                (1.0 + x);
-
-            return mix(luma, start + y * (uHighlightWhitePoint - start),
-                       smoothstep(start, uHighlightWhitePoint, luma));
         }
 
         vec3 linearToProPhoto(vec3 color) {
@@ -383,123 +371,110 @@ object RawShaders {
             return proPhotoToLinear(lutResult);
         }
 
-        vec3 highlightToneMapping(vec3 sceneLinear) {
-            float sourceLuma = luminance(sceneLinear);
-            float shoulderLuma = min(highlightShoulderLuma(sourceLuma), 1.0);
-            float guidedHighlightMask = uHighlightBaseEnabled
-                ? clamp(texture(uHighlightBaseTexture, vTexCoord).r, 0.0, 1.0)
-                : smoothstep(0.4, 0.75, sourceLuma);
-            float tonalHighlightMask = smoothstep(0.4, 0.75, sourceLuma);
-            float gainMask = smoothstep(1.05, 1.35, uHighlightExposureGain);
-            float highlightMask = max(guidedHighlightMask, tonalHighlightMask * 0.35) * gainMask;
-
-            float exposureGain = max(uHighlightExposureGain, 1.0);
-            float exposureCancel = 1.0 / exposureGain;
-            float pivot = 0.35;
-            float exposureCompressedLuma = sourceLuma <= pivot
-                ? sourceLuma
-                : pivot + (sourceLuma - pivot) * exposureCancel;
-            exposureCompressedLuma = min(exposureCompressedLuma, 1.0);
-
-            float localProtectedLuma = min(shoulderLuma, exposureCompressedLuma);
-            float mappedLuma = mix(shoulderLuma, localProtectedLuma, highlightMask);
-
-            return clamp(sceneLinear * (mappedLuma / max(sourceLuma, 1e-5)), 0.0, 1.0);
+        float proPhotoLuminance(vec3 color) {
+            return max(dot(color, vec3(0.2880402, 0.7118741, 0.0000857)), 1e-5);
         }
 
-        void main() {
-            vec3 color = texture(uInputTexture, vTexCoord).rgb;
+        float highlightRolloffStart() {
+            return min(clamp(uCurveShoulderStart, 0.35, 0.95), uCurveWhitePoint - 0.01);
+        }
 
+        float highlightRolloffLuma(float luma) {
+            if (uCurveWhitePoint <= 1.0) return luma;
+
+            float start = highlightRolloffStart();
+            if (luma <= start) return luma;
+
+            float S = (uCurveWhitePoint - start) / (1.0 - start);
+            float x = clamp((luma - start) / max(uCurveWhitePoint - start, 1e-6), 0.0, 1.0);
+            float y = ((S - 2.0) * x * x + (3.0 - 2.0 * S) * x + S) * x;
+
+            return start + y * (1.0 - start);
+        }
+
+        vec3 neutralizeClippedHighlight(vec3 color, float targetLuma) {
+            float peak = max(color.r, max(color.g, color.b));
+            if (peak <= 1.0) return color;
+
+            float trough = min(color.r, min(color.g, color.b));
+            float mid = color.r + color.g + color.b - peak - trough;
+            vec3 neutral = vec3(clamp(targetLuma, 0.0, 1.0));
+
+            float requiredNeutralMix = clamp(
+                (peak - 1.0) / max(peak - neutral.r, 1e-6),
+                0.0,
+                1.0
+            );
+            float multiChannelClip = smoothstep(1.0, 1.08, mid);
+            return mix(color, neutral, max(requiredNeutralMix, multiChannelClip));
+        }
+
+        vec3 highlightRolloff(vec3 color) {
+            if (uCurveWhitePoint <= 1.0) return color;
+
+            float luma = proPhotoLuminance(color);
+            float newLuma = highlightRolloffLuma(luma);
+            vec3 rolled = color * (newLuma / max(luma, 1e-6));
+
+            return neutralizeClippedHighlight(rolled, newLuma);
+        }
+        
+        vec3 applyDcpMaps(vec3 color) {
             if (uDcpHueSatEnabled) {
                 color = applyDcpHsvMap(color, uDcpHueSatTexture, uDcpHueSatDivisions, uDcpHueSatEncoding);
             }
             if (uDcpLookTableEnabled) {
                 color = applyDcpHsvMap(color, uDcpLookTableTexture, uDcpLookTableDivisions, uDcpLookTableEncoding);
             }
+            return color;
+        }
 
+        vec3 applyDisplayTone(vec3 color) {
             if (uSpectralFilmEnabled) {
                 color *= 2.0;
-                color = applySpectralFilm(color);
-            } else {
-                color = highlightToneMapping(color);
-                color = applyAdobeCurve(color);
+                return applySpectralFilm(color);
             }
-
+            return applyAdobeCurve(color);
+        }
+        
+        vec3 sampleToneSource(vec2 uv) {
+            vec3 sampleColor = texture(uInputTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
+            vec3 color = applyDcpMaps(sampleColor);
+            color = highlightRolloff(color);
+            color = applyDisplayTone(color);
             color = uOutputTransform * color;
-            color = linearToSrgb(color);
+            return color;
+        }
 
+        vec3 shRgbToXyz(vec3 rgb) {
+            return mat3(
+                0.7976749, 0.2880402, 0.0000000,
+                0.1351917, 0.7118741, 0.0000000,
+                0.0313534, 0.0000857, 0.8252100
+            ) * rgb;
+        }
+
+        vec3 shXyzToRgb(vec3 xyz) {
+            return mat3(
+                1.3459433, -0.5445989, 0.0000000,
+               -0.2556075,  1.5081673, 0.0000000,
+               -0.0511118,  0.0205351, 1.2118128
+            ) * xyz;
+        }
+
+        ${ShadowsHighlightsShader.GLSL}
+
+        void main() {
+            vec3 color = texture(uInputTexture, vTexCoord).rgb;
+            color = applyDcpMaps(color);
+//            color = highlightRolloff(color);
+            color = applyDisplayTone(color);
+            color = uOutputTransform * color;
+            color = applyShadowsHighlights(color, vTexCoord);
+            color = linearToSrgb(color);
             fragColor = vec4(color, 1.0);
         }
     """.trimIndent()
-
-    /**
-     * Edge-aware highlight mask shader.
-     *
-     * R stores a smoothed tonal highlight mask. This follows RawTherapee's
-     * Shadows/Highlights structure: build a tonal mask, then edge-aware smooth
-     * that mask instead of dividing by a blurred luma base.
-     */
-    val HIGHLIGHT_BASE_FRAGMENT_SHADER = """
-        #version 300 es
-        precision highp float;
-
-        in vec2 vTexCoord;
-        out vec4 fragColor;
-
-        uniform sampler2D uInputTexture;
-        uniform vec2 uSourceTexelSize;
-        uniform float uBlurRadius;
-        uniform float uRangeSigmaLog;
-        uniform float uMaskThreshold;
-
-        float luminance(vec3 color) {
-            return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-        }
-
-        float pow4(float value) {
-            float v = clamp(value, 0.0, 1.0);
-            float v2 = v * v;
-            return v2 * v2;
-        }
-
-        float highlightMaskFromLuma(float luma) {
-            float threshold = clamp(uMaskThreshold, 0.05, 0.98);
-            float normalizedLuma = clamp(luma, 0.0, 1.0);
-            float softMask = pow4(normalizedLuma * 0.9 / threshold);
-            return normalizedLuma > threshold ? 1.0 : softMask;
-        }
-
-        float sampleLuma(vec2 uv) {
-            uv = clamp(uv, vec2(0.0), vec2(1.0));
-            return luminance(texture(uInputTexture, uv).rgb);
-        }
-
-        void main() {
-            vec2 stepSize = uSourceTexelSize * (uBlurRadius * 0.5);
-            float centerLuma = sampleLuma(vTexCoord);
-            float centerLog = log2(centerLuma);
-            float twoRangeSigma2 = 2.0 * uRangeSigmaLog * uRangeSigmaLog;
-            float sum = 0.0;
-            float weightSum = 0.0;
-
-            for (int y = -2; y <= 2; y++) {
-                for (int x = -2; x <= 2; x++) {
-                    vec2 offset = vec2(float(x), float(y));
-                    float sampleLumaValue = sampleLuma(vTexCoord + offset * stepSize);
-                    float logDelta = log2(sampleLumaValue) - centerLog;
-                    float spatialWeight = exp(-dot(offset, offset) * 0.5);
-                    float rangeWeight = exp(-(logDelta * logDelta) / max(twoRangeSigma2, 1e-5));
-                    float weight = spatialWeight * rangeWeight;
-                    sum += highlightMaskFromLuma(sampleLumaValue) * weight;
-                    weightSum += weight;
-                }
-            }
-
-            float baseLuma = sum / max(weightSum, 1e-5);
-            fragColor = vec4(baseLuma, baseLuma, baseLuma, 1.0);
-        }
-    """.trimIndent()
-
 
     /**
      * Dedicated Sharpening Shader

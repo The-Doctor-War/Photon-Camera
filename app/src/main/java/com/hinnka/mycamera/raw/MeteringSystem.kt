@@ -32,8 +32,37 @@ object MeteringSystem {
         val meteredEv: Float,
         val dynamicRangeGap: Float,
         val avgLuma: Float,
+        val p05: Float,
+        val p50: Float,
+        val p95: Float,
+        val p99: Float,
         val p998: Float
-    )
+    ) {
+        fun scaleLuma(scale: Float): MeteringResult {
+            val safeScale = if (scale.isFinite() && scale > 0f) scale else 1f
+            return copy(
+                avgLuma = (avgLuma * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                p05 = (p05 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                p50 = (p50 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                p95 = (p95 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                p99 = (p99 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                p998 = (p998 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA)
+            )
+        }
+
+        companion object {
+            val EMPTY = MeteringResult(
+                meteredEv = 0f,
+                dynamicRangeGap = 0f,
+                avgLuma = 0f,
+                p05 = 0f,
+                p50 = 0f,
+                p95 = 0f,
+                p99 = 0f,
+                p998 = 0f
+            )
+        }
+    }
 
     private data class DepthWeightMap(
         val weights: FloatArray,
@@ -99,7 +128,7 @@ object MeteringSystem {
         lumaAt: (Int) -> Float
     ): MeteringResult {
         val pixelCount = width * height
-        if (pixelCount == 0) return MeteringResult(0f, 0f, 0f, 0f)
+        if (pixelCount == 0) return MeteringResult.EMPTY
 
         val depthWeights = decodeDepthWeights(weightBuffer, pixelCount)
         val lumas = FloatArray(pixelCount)
@@ -127,9 +156,13 @@ object MeteringSystem {
         val midToneLuma = midToneReference.luma
 
         lumas.sort()
-        val p998 = lumas[(pixelCount * 0.998f).toInt().coerceIn(0, pixelCount - 1)]
+        val p05 = percentile(lumas, 0.05f)
+        val p50 = percentile(lumas, 0.50f)
+        val p95 = percentile(lumas, 0.95f)
+        val p99 = percentile(lumas, 0.99f)
+        val p998 = percentile(lumas, 0.998f)
 
-        val highlightAnchorGain = linearExposureGain / p998.coerceAtLeast(0.01f)
+        val highlightAnchorGain = 1f //linearExposureGain / p998.coerceAtLeast(0.01f)
         val avgLuma = midToneLuma
         val midToneGain = targetLuma / midToneLuma.coerceAtLeast(LUMA_FLOOR)
         val dynamicRangeGap = midToneGain / highlightAnchorGain
@@ -140,7 +173,8 @@ object MeteringSystem {
 
         PLog.d(
             TAG,
-            "$tag: p998=$p998 target=$targetLuma midToneLuma=$midToneLuma " +
+            "$tag: p05=$p05 p50=$p50 p95=$p95 p99=$p99 p998=$p998 " +
+                "target=$targetLuma midToneLuma=$midToneLuma " +
                 "midToneZoneMedianLuma=${midToneReference.zoneMedianLuma} " +
                 "midToneBucketMedianLuma=${midToneReference.bucketMedianLuma} " +
                 "midToneZones=${midToneReference.retainedZoneCount} midToneBuckets=${midToneReference.retainedBucketCount} " +
@@ -154,6 +188,10 @@ object MeteringSystem {
             meteredEv = rawMeteredEv.coerceIn(-2f, 2f),
             dynamicRangeGap = dynamicRangeGap,
             avgLuma = avgLuma,
+            p05 = p05,
+            p50 = p50,
+            p95 = p95,
+            p99 = p99,
             p998 = p998
         )
     }

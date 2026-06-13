@@ -77,6 +77,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         val uCropRectLocation: Int,
         val uApertureLocation: Int,
         val uFocusPointLocation: Int,
+        val uTexelSizeLocation: Int,
         val uCurveTextureLocation: Int,
         val uCurveEnabledLocation: Int,
         val aPositionLocation: Int,
@@ -901,8 +902,12 @@ class LutRenderer : GLSurfaceView.Renderer {
             GLES30.glUniform1f(locations.uTintLocation, params.tint)
             GLES30.glUniform1f(locations.uFadeLocation, params.fade)
             GLES30.glUniform1f(locations.uVibranceLocation, params.color)
-            GLES30.glUniform1f(locations.uHighlightsLocation, params.highlights)
-            GLES30.glUniform1f(locations.uShadowsLocation, params.shadows)
+            ShadowsHighlightsShader.bindUniformLocations(
+                highlightsLocation = locations.uHighlightsLocation,
+                shadowsLocation = locations.uShadowsLocation,
+                highlights = params.highlights,
+                shadows = params.shadows
+            )
             GLES30.glUniform1f(locations.uToneToeLocation, params.toneToe)
             GLES30.glUniform1f(locations.uToneShoulderLocation, params.toneShoulder)
             GLES30.glUniform1f(locations.uTonePivotLocation, params.tonePivot)
@@ -929,6 +934,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1f(locations.uApertureLocation, apertureOverride)
         val fp = focusPointOverride ?: PointF(0.5f, 0.5f)
         GLES30.glUniform2f(locations.uFocusPointLocation, fp.x, 1.0f - fp.y)
+        GLES30.glUniform2f(
+            locations.uTexelSizeLocation,
+            1.0f / maxOf(1, width).toFloat(),
+            1.0f / maxOf(1, height).toFloat()
+        )
         GLES30.glUniform1f(locations.uChromaticAberrationLocation, params.chromaticAberration)
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vertexBufferId)
@@ -1380,6 +1390,7 @@ class LutRenderer : GLSurfaceView.Renderer {
             uCropRectLocation = GLES30.glGetUniformLocation(program, "uCropRect"),
             uApertureLocation = GLES30.glGetUniformLocation(program, "uAperture"),
             uFocusPointLocation = GLES30.glGetUniformLocation(program, "uFocusPoint"),
+            uTexelSizeLocation = GLES30.glGetUniformLocation(program, "uTexelSize"),
             uCurveTextureLocation = GLES30.glGetUniformLocation(program, "uCurveTexture"),
             uCurveEnabledLocation = GLES30.glGetUniformLocation(program, "uCurveEnabled"),
             aPositionLocation = GLES30.glGetAttribLocation(program, "aPosition"),

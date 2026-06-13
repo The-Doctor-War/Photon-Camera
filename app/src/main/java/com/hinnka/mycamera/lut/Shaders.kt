@@ -562,6 +562,7 @@ object Shaders {
     uniform mat3 uPrimaryCalibrationMatrix;
     uniform float uAperture;      // 计算光圈 (1.4 ~ 16.0)
     uniform vec2 uFocusPoint;     // 对焦点 (0.0 ~ 1.0)
+    uniform vec2 uTexelSize;      // 当前渲染目标像素尺寸，用于局部影调 base 采样
 
     // 曲线调整纹理 (256×1 RGBA8)
     // R = master_curve(red_curve(x)), G = master_curve(green_curve(x)), B = master_curve(blue_curve(x))
@@ -627,6 +628,46 @@ object Shaders {
             sanitizeFloat(color.b)
         );
     }
+
+    float getLuma(vec3 color) {
+        return dot(color, W);
+    }
+
+    vec3 prepareToneSample(vec3 sampleColor) {
+        vec3 prepared = sampleColor;
+        if (uIsHlgInput) {
+            prepared = hlgToLinear(prepared);
+            prepared = linearToSrgb(prepared);
+        }
+        if (abs(uExposure) > 0.001) {
+            prepared = applyExposureInLinearSpace(prepared, uExposure);
+        }
+        return sanitizeColor(prepared);
+    }
+
+    vec3 sampleToneSource(vec2 uv) {
+        return prepareToneSample(texture(uCameraTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb);
+    }
+
+    vec3 shRgbToXyz(vec3 rgb) {
+        vec3 linearRgb = srgbToLinear(rgb);
+        return mat3(
+            0.4360747, 0.2225045, 0.0139322,
+            0.3850649, 0.7168786, 0.0971045,
+            0.1430804, 0.0606169, 0.7141733
+        ) * linearRgb;
+    }
+
+    vec3 shXyzToRgb(vec3 xyz) {
+        vec3 linearRgb = mat3(
+             3.1338561, -0.9787684,  0.0719453,
+            -1.6168667,  1.9161415, -0.2289914,
+            -0.4906146,  0.0334540,  1.4052427
+        ) * xyz;
+        return linearToSrgb(linearRgb);
+    }
+
+    ${ShadowsHighlightsShader.GLSL}
 
     float hash12(vec2 p) {
         vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -1049,29 +1090,12 @@ object Shaders {
                 color.rgb = sanitizeColor(color.rgb);
             }
 
+            // 2. 高光/阴影调整：RT 风格 tonal width + 局部 base mask，避免线性乘法洗白全图
+            color.rgb = applyShadowsHighlights(color.rgb, uvCoord);
+            color.rgb = sanitizeColor(color.rgb);
+
             // 计算基础亮度，后续复用
-            float luma = dot(color.rgb, W);
-
-            // 2. 高光/阴影调整（分区调整，基于亮度 mask）
-            if (abs(uHighlights) > 0.001 || abs(uShadows) > 0.001) {
-                float highlightMask = smoothstep(0.5, 1.0, luma);
-                float shadowMask = 1.0 - smoothstep(0.0, 0.5, luma);
-
-                if (abs(uHighlights) > 0.001) {
-                    float highlightFactor = 1.0 + uHighlights * (uHighlights > 0.0 ? 0.7 : 0.3);
-                    color.rgb = mix(color.rgb, color.rgb * highlightFactor, highlightMask);
-                }
-
-                if (abs(uShadows) > 0.001) {
-                    vec3 shadowTarget = (uShadows > 0.0)
-                        ? (mix(color.rgb, vec3(luma), uShadows * 0.2) + (color.rgb * uShadows * 0.5))
-                        : (color.rgb * (1.0 + uShadows * 0.5));
-                    color.rgb = mix(color.rgb, shadowTarget, shadowMask);
-                }
-                // 更新亮度
-                color.rgb = sanitizeColor(color.rgb);
-                luma = dot(color.rgb, W);
-            }
+            float luma = getLuma(color.rgb);
 
             // 3. 对比度（围绕中灰点调整）
             if (abs(uContrast - 1.0) > 0.001) {

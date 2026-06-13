@@ -10,6 +10,7 @@ import android.util.Half
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
+import com.hinnka.mycamera.lut.ShadowsHighlightsShader
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
 import com.hinnka.mycamera.ml.SharedDepthEstimator
 import com.hinnka.mycamera.utils.BitmapUtils
@@ -47,6 +48,22 @@ import android.opengl.Matrix as GlMatrix
  * 8. 最终锐化 (Unsharp Mask)
  */
 class RawDemosaicProcessor {
+
+    private data class ShadowsHighlightsParams(
+        val highlights: Float,
+        val shadows: Float,
+        val curveWhitePoint: Float,
+        val curveShoulderStart: Float
+    ) {
+        companion object {
+            val NEUTRAL = ShadowsHighlightsParams(
+                highlights = 0f,
+                shadows = 0f,
+                curveWhitePoint = 1f,
+                curveShoulderStart = 0.78f
+            )
+        }
+    }
 
     /**
      * DNG 数据容器（包含原始 DngRawData 用于清理）
@@ -183,11 +200,11 @@ class RawDemosaicProcessor {
 
     // GL 资源
     private var combinedProgram = 0
-    private var highlightBaseProgram = 0
     private var sharpenProgram = 0
     private var passthroughProgram = 0
     private var hdrReferenceProgram = 0
     private var chromaDenoiseProgram = 0
+    private var loggedShadowsHighlightsUniforms = false
 
     // RCD Compute Shader Programs
     private var rcdPopulateProgram = 0
@@ -219,11 +236,6 @@ class RawDemosaicProcessor {
     private var linearMeteringTextureId = 0
     private var linearMeteringWidth = 0
     private var linearMeteringHeight = 0
-
-    private var highlightBaseFramebufferId = 0
-    private var highlightBaseTextureId = 0
-    private var highlightBaseWidth = 0
-    private var highlightBaseHeight = 0
 
     private var hdrReferenceFramebufferId = 0
     private var hdrReferenceTextureId = 0
@@ -650,7 +662,6 @@ class RawDemosaicProcessor {
             // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
             actualRawData = null
 
-            var highlightWhitePoint = 0f
             var effectiveExposureCompensation = rawExposureCompensation
 
             // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
@@ -906,32 +917,28 @@ class RawDemosaicProcessor {
 
             val linearExposureGain = computeLinearExposureGain(
                 actualMetadata,
-                effectiveExposureCompensation,
+                0f,
                 resolvedDcpRenderPlan
             )
 
-            // 处理自动曝光测光
+            // 复用 RAW AE 的线性 metering 分布统计，AE 与 Shadows/Highlights 使用同一份结果。
+            val meteringResult = resolveRawAutoExposureEv(
+                context = context,
+                metadata = actualMetadata,
+                sourceTextureId = demosaicTextureId,
+                rawBlackPointCorrection = rawBlackPointCorrection,
+                rawWhitePointCorrection = rawWhitePointCorrection,
+                dcpRenderPlan = resolvedDcpRenderPlan,
+                useDepthWeighting = rawAutoExposure
+            )
+
             if (rawAutoExposure) {
-                val meteringResult = resolveRawAutoExposureEv(
-                    context = context,
-                    metadata = actualMetadata,
-                    sourceTextureId = demosaicTextureId,
-                    meteringExposureCompensation = effectiveExposureCompensation,
-                    rawBlackPointCorrection = rawBlackPointCorrection,
-                    rawWhitePointCorrection = rawWhitePointCorrection,
-                    dcpRenderPlan = resolvedDcpRenderPlan,
-                )
                 val autoExposureEv = meteringResult.meteredEv
-                if (autoExposureEv > 0f) {
-                    effectiveExposureCompensation += autoExposureEv
-                    highlightWhitePoint = max(
-                        highlightWhitePoint,
-                        meteringResult.p998 * 2f.pow(effectiveExposureCompensation)
-                    )
-                } else {
-                    effectiveExposureCompensation += autoExposureEv
-                }
+                effectiveExposureCompensation += autoExposureEv
             }
+            val shadowsHighlightsParams = resolveShadowsHighlightsParams(
+                meteringResult = meteringResult.scaleLuma(2.0f.pow(effectiveExposureCompensation))
+            )
 
             // 运行 linearRcdProgram 将 CCM & Exposure 应用在已解马赛克的浮点 RCD 图像上
             checkGlError("Before LinearRcdPass")
@@ -1035,11 +1042,6 @@ class RawDemosaicProcessor {
             }
 
             // 5. 第二步：Combined Pass (HDR Linear -> LDR sRGB + LUT)
-            setupHighlightBaseFramebuffer(actualWidth, actualHeight)
-            renderHighlightBasePass(
-                metadata = actualMetadata,
-                inputTextureId = outputTexture
-            )
             setupCombinedFramebuffer(actualWidth, actualHeight)
             val combinedStart = System.currentTimeMillis()
             renderCombinedPass(
@@ -1047,11 +1049,7 @@ class RawDemosaicProcessor {
                 inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 spectralFilmLut = spectralFilmLut,
-                highlightWhitePoint = highlightWhitePoint,
-                highlightExposureGain = if (highlightWhitePoint > 1f) 2.0f.pow(
-                    effectiveExposureCompensation
-                ) else 1f,
-                highlightBaseTextureId = highlightBaseTextureId
+                shadowsHighlightsParams = shadowsHighlightsParams
             )
             PLog.d(TAG, "Combined Pass took: ${System.currentTimeMillis() - combinedStart}ms")
             // outputTexture 已被 combinedPass 消费，提前释放
@@ -1209,7 +1207,7 @@ class RawDemosaicProcessor {
 
             // 初始化着色器和缓冲区
             initShaderProgram()
-            if (combinedProgram == 0 || highlightBaseProgram == 0 || sharpenProgram == 0 || passthroughProgram == 0 ||
+            if (combinedProgram == 0 || sharpenProgram == 0 || passthroughProgram == 0 ||
                 chromaDenoiseProgram == 0 ||
                 rcdPopulateProgram == 0 || rcdStep1Program == 0 || rcdStep2Program == 0 ||
                 rcdStep3Program == 0 || rcdStep40Program == 0 || rcdStep41Program == 0 ||
@@ -1218,7 +1216,7 @@ class RawDemosaicProcessor {
             ) {
                 PLog.e(
                     TAG, "Critical shader programs failed to compile or link. " +
-                            "combined=$combinedProgram highlightBase=$highlightBaseProgram sharpen=$sharpenProgram pass=$passthroughProgram " +
+                            "combined=$combinedProgram sharpen=$sharpenProgram pass=$passthroughProgram " +
                             "chromaDenoise=$chromaDenoiseProgram " +
                             "populate=$rcdPopulateProgram step1=$rcdStep1Program step2=$rcdStep2Program " +
                             "step3=$rcdStep3Program step40=$rcdStep40Program step41=$rcdStep41Program " +
@@ -1268,20 +1266,6 @@ class RawDemosaicProcessor {
             }
 
             GLES30.glDeleteShader(fShaderCombined)
-        }
-
-        val fShaderHighlightBase =
-            compileShader(GLES30.GL_FRAGMENT_SHADER, RawShaders.HIGHLIGHT_BASE_FRAGMENT_SHADER)
-        if (vShader != 0 && fShaderHighlightBase != 0) {
-            highlightBaseProgram = GLES30.glCreateProgram()
-            GLES30.glAttachShader(highlightBaseProgram, vShader)
-            GLES30.glAttachShader(highlightBaseProgram, fShaderHighlightBase)
-            GLES30.glLinkProgram(highlightBaseProgram)
-            if (!logProgramLinkResult(highlightBaseProgram, "highlightBaseProgram")) {
-                highlightBaseProgram = 0
-            }
-
-            GLES30.glDeleteShader(fShaderHighlightBase)
         }
 
         val fShaderHdrReference =
@@ -2732,58 +2716,6 @@ class RawDemosaicProcessor {
         checkGlError("setupLinearMeteringFramebuffer")
     }
 
-    private fun setupHighlightBaseFramebuffer(sourceWidth: Int, sourceHeight: Int) {
-        val width = maxOf(1, sourceWidth / 16)
-        val height = maxOf(1, sourceHeight / 16)
-        if (highlightBaseWidth == width && highlightBaseHeight == height && highlightBaseFramebufferId != 0) {
-            return
-        }
-
-        if (highlightBaseTextureId != 0) {
-            GLES30.glDeleteTextures(1, intArrayOf(highlightBaseTextureId), 0)
-        }
-        if (highlightBaseFramebufferId != 0) {
-            GLES30.glDeleteFramebuffers(1, intArrayOf(highlightBaseFramebufferId), 0)
-        }
-
-        highlightBaseWidth = width
-        highlightBaseHeight = height
-
-        val textures = IntArray(1)
-        GLES30.glGenTextures(1, textures, 0)
-        highlightBaseTextureId = textures[0]
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, highlightBaseTextureId)
-        GLES30.glTexImage2D(
-            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA16F, width, height, 0,
-            GLES30.GL_RGBA, GLES30.GL_HALF_FLOAT, null
-        )
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_2D,
-            GLES30.GL_TEXTURE_WRAP_S,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_2D,
-            GLES30.GL_TEXTURE_WRAP_T,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-
-        val framebuffers = IntArray(1)
-        GLES30.glGenFramebuffers(1, framebuffers, 0)
-        highlightBaseFramebufferId = framebuffers[0]
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, highlightBaseFramebufferId)
-        GLES30.glFramebufferTexture2D(
-            GLES30.GL_FRAMEBUFFER,
-            GLES30.GL_COLOR_ATTACHMENT0,
-            GLES30.GL_TEXTURE_2D,
-            highlightBaseTextureId,
-            0
-        )
-        checkGlError("setupHighlightBaseFramebuffer")
-    }
-
     private fun setupHdrReferenceFramebuffer(width: Int, height: Int) {
         if (hdrReferenceWidth == width && hdrReferenceHeight == height && hdrReferenceFramebufferId != 0) {
             return
@@ -3315,11 +3247,9 @@ class RawDemosaicProcessor {
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
         spectralFilmLut: SpectralFilmLut? = null,
+        shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
         viewportWidth: Int = metadata.width,
-        viewportHeight: Int = metadata.height,
-        highlightWhitePoint: Float = 0f,
-        highlightExposureGain: Float = 1f,
-        highlightBaseTextureId: Int = 0
+        viewportHeight: Int = metadata.height
     ) {
         val baseCurve = dcpRenderPlan?.toneCurveLut ?: ACR3Curve.samples()
         val outputTransform = computeWorkingToOutputTransform(ColorSpace.ProPhoto, ColorSpace.SRGB)
@@ -3349,21 +3279,12 @@ class RawDemosaicProcessor {
             GLES30.glGetUniformLocation(combinedProgram, "uCurveEnabled"),
             1
         )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(combinedProgram, "uHighlightWhitePoint"),
-            highlightWhitePoint
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(combinedProgram, "uTexelSize"),
+            1.0f / maxOf(1, viewportWidth).toFloat(),
+            1.0f / maxOf(1, viewportHeight).toFloat()
         )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(combinedProgram, "uHighlightExposureGain"),
-            highlightExposureGain.coerceAtLeast(1f)
-        )
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE5)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, highlightBaseTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(combinedProgram, "uHighlightBaseTexture"), 5)
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(combinedProgram, "uHighlightBaseEnabled"),
-            if (highlightBaseTextureId != 0) 1 else 0
-        )
+        bindShadowsHighlightsUniforms(shadowsHighlightsParams)
         checkGlError("renderCombinedPass base uniforms")
 
         bindDcpCombinedResources(dcpRenderPlan)
@@ -3385,56 +3306,33 @@ class RawDemosaicProcessor {
         checkGlError("renderCombinedPass")
     }
 
-    private fun resolveDroHighlightWhitePoint(droExposureCompensation: Float): Float {
-        return if (droExposureCompensation > 0f) {
-            2.0f.pow(droExposureCompensation)
-        } else {
-            0f
+    private fun bindShadowsHighlightsUniforms(params: ShadowsHighlightsParams) {
+        val highlightsLocation = GLES30.glGetUniformLocation(combinedProgram, "uHighlights")
+        val shadowsLocation = GLES30.glGetUniformLocation(combinedProgram, "uShadows")
+        ShadowsHighlightsShader.bindUniformLocations(
+            highlightsLocation = highlightsLocation,
+            shadowsLocation = shadowsLocation,
+            highlights = params.highlights,
+            shadows = params.shadows
+        )
+        if (!loggedShadowsHighlightsUniforms) {
+            loggedShadowsHighlightsUniforms = true
+            PLog.d(
+                TAG,
+                "RAW Shadows/Highlights uniforms: " +
+                    "uHighlightsLoc=$highlightsLocation uShadowsLoc=$shadowsLocation " +
+                    "highlights=${params.highlights} shadows=${params.shadows} " +
+                    "curveWhitePoint=${params.curveWhitePoint} curveShoulderStart=${params.curveShoulderStart}"
+            )
         }
-    }
-
-    private fun renderHighlightBasePass(
-        metadata: RawMetadata,
-        inputTextureId: Int
-    ) {
-        if (highlightBaseProgram == 0 || highlightBaseFramebufferId == 0) return
-
-        GLES30.glUseProgram(highlightBaseProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, highlightBaseFramebufferId)
-        GLES30.glViewport(0, 0, highlightBaseWidth, highlightBaseHeight)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(highlightBaseProgram, "uInputTexture"), 0)
-
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(highlightBaseProgram, "uSourceTexelSize"),
-            1.0f / metadata.width,
-            1.0f / metadata.height
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(combinedProgram, "uCurveWhitePoint"),
+            params.curveWhitePoint
         )
         GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(highlightBaseProgram, "uBlurRadius"),
-            32.0f
+            GLES30.glGetUniformLocation(combinedProgram, "uCurveShoulderStart"),
+            params.curveShoulderStart
         )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(highlightBaseProgram, "uRangeSigmaLog"),
-            0.85f
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(highlightBaseProgram, "uMaskThreshold"),
-            0.72f
-        )
-
-        val identityMatrix = FloatArray(16)
-        GlMatrix.setIdentityM(identityMatrix, 0)
-        GLES30.glUniformMatrix4fv(
-            GLES30.glGetUniformLocation(highlightBaseProgram, "uTexMatrix"),
-            1, false, identityMatrix, 0
-        )
-
-        drawQuad(highlightBaseProgram)
-        checkGlError("renderHighlightBasePass")
     }
 
     private fun logProgramLinkResult(program: Int, name: String): Boolean {
@@ -3644,6 +3542,97 @@ class RawDemosaicProcessor {
         return normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
     }
 
+    private fun resolveShadowsHighlightsParams(
+        meteringResult: MeteringSystem.MeteringResult
+    ): ShadowsHighlightsParams {
+        if (meteringResult.p50 <= 0f || meteringResult.p998 <= 0f) {
+            return ShadowsHighlightsParams.NEUTRAL
+        }
+
+        val p05 = sanitizeToneLuma(meteringResult.p05)
+        val p50 = sanitizeToneLuma(meteringResult.p50).coerceAtLeast(p05 + 1e-4f)
+        val p95 = sanitizeToneLuma(meteringResult.p95).coerceAtLeast(p50 + 1e-4f)
+        val p99 = sanitizeToneLuma(meteringResult.p99).coerceAtLeast(p95 + 1e-4f)
+        val p998 = sanitizeToneLuma(meteringResult.p998).coerceAtLeast(p99 + 1e-4f)
+
+        val l05 = labLightnessSignal(p05)
+        val l50 = labLightnessSignal(p50).coerceAtLeast(l05 + 1e-4f)
+        val l95 = labLightnessSignal(p95).coerceAtLeast(l50 + 1e-4f)
+        val l99 = labLightnessSignal(p99).coerceAtLeast(l95 + 1e-4f)
+        val l998 = labLightnessSignal(p998).coerceAtLeast(l99 + 1e-4f)
+
+        val shadowTailRatio = (1f - l05 / l50.coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
+        val shadowVisibility = smoothStep(0.035f, 0.16f, l50)
+        val lowKeyProtection = smoothStep(0.55f, 0.85f, l95)
+        val midtoneDeficit = (1f - smoothStep(0.20f, 0.42f, l50)).coerceIn(0f, 1f)
+        val shadowScale = 0.08f + 0.10f * lowKeyProtection
+
+        val highlightBodyPressure = smoothStep(0.72f, 0.92f, l95) * 0.65f
+        val highlightTailPressure = smoothStep(0.95f, 1.10f, l99)
+        val highlightPressure = max(highlightBodyPressure, highlightTailPressure)
+        val highlightTailSpread = smoothStep(0.04f, 0.16f, l998 - l95)
+        val highlightStrength = (highlightPressure * (0.45f + 0.55f * highlightTailSpread))
+            .coerceIn(0f, 0.95f)
+        val highlights = -highlightStrength
+        val highlightSuppression = 1f - highlightPressure * 0.78f
+        val shadows = (shadowTailRatio * shadowVisibility * midtoneDeficit * shadowScale * highlightSuppression)
+            .coerceIn(0f, 0.22f)
+        val curveWhitePoint = if (p99 > 1f || p998 > 1.05f) {
+            p998.coerceIn(1.05f, 4.0f)
+        } else {
+            1f
+        }
+        val curveShoulderStart = (0.78f - highlightPressure * 0.20f).coerceIn(0.56f, 0.82f)
+
+        val params = ShadowsHighlightsParams(
+            highlights = highlights,
+            shadows = shadows,
+            curveWhitePoint = curveWhitePoint,
+            curveShoulderStart = curveShoulderStart
+        )
+        PLog.d(
+            TAG,
+            "Histogram Shadows/Highlights: p05=$p05 p50=$p50 p95=$p95 p99=$p99 p998=$p998 " +
+                "labL=[$l05,$l50,$l95,$l99,$l998] " +
+                "shadowTail=$shadowTailRatio shadowVisibility=$shadowVisibility " +
+                "lowKeyProtection=$lowKeyProtection midtoneDeficit=$midtoneDeficit " +
+                "highlightPressure=$highlightPressure highlightSuppression=$highlightSuppression " +
+                "rawHighlightStrength=$highlightStrength sharedLocalTone=true " +
+                "curveWhitePoint=$curveWhitePoint curveShoulderStart=$curveShoulderStart " +
+                "sliders highlights=$highlights shadows=$shadows"
+        )
+        return params
+    }
+
+    private fun labLightnessSignal(luma: Float): Float {
+        val safeLuma = sanitizeToneLuma(luma)
+        val epsilon = 216f / 24389f
+        val kappa = 24389f / 27f
+        val fy = if (safeLuma > epsilon) {
+            safeLuma.pow(1f / 3f)
+        } else {
+            (kappa * safeLuma + 16f) / 116f
+        }
+        return ((116f * fy - 16f) / 100f).coerceAtLeast(0f)
+    }
+
+    private fun sanitizeToneLuma(value: Float): Float {
+        return if (value.isFinite() && value > 0f) {
+            value.coerceAtMost(16f)
+        } else {
+            0f
+        }
+    }
+
+    private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
+        val width = edge1 - edge0
+        if (!edge0.isFinite() || !edge1.isFinite() || !x.isFinite() || abs(width) < 1e-6f) {
+            return if (x >= edge1) 1f else 0f
+        }
+        val t = ((x - edge0) / width).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
     private fun renderLinearRcdPass(
         metadata: RawMetadata,
         sourceTextureId: Int,
@@ -3704,10 +3693,10 @@ class RawDemosaicProcessor {
         context: Context,
         metadata: RawMetadata,
         sourceTextureId: Int,
-        meteringExposureCompensation: Float,
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
         dcpRenderPlan: DcpRenderPlan?,
+        useDepthWeighting: Boolean = true
     ): MeteringSystem.MeteringResult {
         val meteringWidth = minOf(metadata.width, 256).coerceAtLeast(1)
         val meteringHeight = minOf(metadata.height, 256).coerceAtLeast(1)
@@ -3719,7 +3708,7 @@ class RawDemosaicProcessor {
                 targetFramebufferId = linearMeteringFramebufferId,
                 viewportWidth = meteringWidth,
                 viewportHeight = meteringHeight,
-                rawExposureCompensation = meteringExposureCompensation,
+                rawExposureCompensation = 0f,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 dcpRenderPlan = dcpRenderPlan,
@@ -3728,8 +3717,10 @@ class RawDemosaicProcessor {
             val buffer = LargeDirectBuffer.allocate(
                 meteringWidth.toLong() * meteringHeight.toLong() * 4L * 2L,
                 "RAW auto exposure metering"
-            ) ?: return MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)
+            ) ?: return MeteringSystem.MeteringResult.EMPTY
             var weightBuffer: ByteBuffer? = null
+            var bitmap: Bitmap? = null
+            var depthMap: Bitmap? = null
             try {
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearMeteringFramebufferId)
                 GLES30.glReadPixels(
@@ -3746,22 +3737,23 @@ class RawDemosaicProcessor {
 
                 val linearPixels = buffer.asShortBuffer()
 
-                // Calculate depth weighting from a display-encoded preview, while AE uses linear RAW luma.
-                val bitmap =
-                    createLinearMeteringPreviewBitmap(linearPixels, meteringWidth, meteringHeight)
-                val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
-                weightBuffer = depthMap?.let {
-                    val wb = LargeDirectBuffer.allocate(
-                        it.byteCount.toLong(),
-                        "RAW auto exposure depth weight"
-                    )
-                        ?: return@let null
-                    it.copyPixelsToBuffer(wb)
-                    wb.position(0)
-                    wb
+                if (useDepthWeighting) {
+                    // Calculate depth weighting from a display-encoded preview, while AE uses linear RAW luma.
+                    bitmap = createLinearMeteringPreviewBitmap(linearPixels, meteringWidth, meteringHeight)
+                    depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
+                    weightBuffer = depthMap?.let {
+                        val wb = LargeDirectBuffer.allocate(
+                            it.byteCount.toLong(),
+                            "RAW auto exposure depth weight"
+                        )
+                            ?: return@let null
+                        it.copyPixelsToBuffer(wb)
+                        wb.position(0)
+                        wb
+                    }
                 }
 
-                val linearExposureGain = computeLinearExposureGain(metadata, meteringExposureCompensation, dcpRenderPlan)
+                val linearExposureGain = computeLinearExposureGain(metadata, 0f, dcpRenderPlan)
                 val meteringResult = MeteringSystem.analyzeLinearHalfFloatExposureEv(
                     pixelBuffer = linearPixels,
                     width = meteringWidth,
@@ -3770,21 +3762,26 @@ class RawDemosaicProcessor {
                     linearExposureGain = linearExposureGain
                 )
 
-                // Clean up temporary bitmaps
                 if (depthMap != null && !depthMap.isRecycled) {
                     depthMap.recycle()
                 }
-                if (!bitmap.isRecycled) {
+                if (bitmap != null && !bitmap.isRecycled) {
                     bitmap.recycle()
                 }
                 meteringResult
             } finally {
+                if (depthMap != null && !depthMap.isRecycled) {
+                    depthMap.recycle()
+                }
+                if (bitmap != null && !bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
                 LargeDirectBuffer.free(weightBuffer)
                 LargeDirectBuffer.free(buffer)
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
-            MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)
+            MeteringSystem.MeteringResult.EMPTY
         }
     }
 
@@ -4050,7 +4047,6 @@ class RawDemosaicProcessor {
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
 
         if (combinedProgram != 0) GLES30.glDeleteProgram(combinedProgram)
-        if (highlightBaseProgram != 0) GLES30.glDeleteProgram(highlightBaseProgram)
         if (sharpenProgram != 0) GLES30.glDeleteProgram(sharpenProgram)
         if (passthroughProgram != 0) GLES30.glDeleteProgram(passthroughProgram)
         if (hdrReferenceProgram != 0) GLES30.glDeleteProgram(hdrReferenceProgram)
@@ -4138,16 +4134,6 @@ class RawDemosaicProcessor {
         if (linearMeteringFramebufferId != 0) GLES30.glDeleteFramebuffers(
             1,
             intArrayOf(linearMeteringFramebufferId),
-            0
-        )
-        if (highlightBaseTextureId != 0) GLES30.glDeleteTextures(
-            1,
-            intArrayOf(highlightBaseTextureId),
-            0
-        )
-        if (highlightBaseFramebufferId != 0) GLES30.glDeleteFramebuffers(
-            1,
-            intArrayOf(highlightBaseFramebufferId),
             0
         )
         if (hdrReferenceTextureId != 0) GLES30.glDeleteTextures(
