@@ -7,7 +7,7 @@ package com.hinnka.mycamera.lut
  * and does not change the existing denoiseprofile luminance/noise-reduction path.
  */
 object ChromaDenoiseShaders {
-    const val SIGMA_STRENGTH_AT_SLIDER_ONE = 5.0f
+    const val SIGMA_STRENGTH_AT_SLIDER_ONE = 6.0f
 
     val PASS_CHROMA_DENOISE = """
         #version 300 es
@@ -44,7 +44,7 @@ object ChromaDenoiseShaders {
             vec2 sumUV = vec2(0.0);
             float sumW = 0.0;
 
-            float stepScale = 6.5;
+            float stepScale = 7.0;
             float localH = uH * noiseSigmaForLuma(yuv.x);
             float invChromaH2 = 1.0 / max((localH * 1.5) * (localH * 1.5), 1e-6);
             float invLumaH2 = 1.0 / max((localH * 0.5) * (localH * 0.5), 1e-6);

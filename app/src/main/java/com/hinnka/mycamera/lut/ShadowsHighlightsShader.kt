@@ -26,8 +26,8 @@ object ShadowsHighlightsShader {
         const float SH_LAB_EPSILON = 216.0 / 24389.0;
         const float SH_LAB_KAPPA = 24389.0 / 27.0;
         const float SH_LOW_APPROX = 0.000001;
-        const float SH_COMPRESS = 0.50;
-        const float SH_HIGHLIGHTS_COLOR_ADJUSTMENT = 0.5;
+        const float SH_COMPRESS = 0.5;
+        const float SH_HIGHLIGHTS_COLOR_ADJUSTMENT = 0.6;
         const float SH_SHADOWS_COLOR_ADJUSTMENT = 1.0;
 
         float shSanitizeFloat(float value) {

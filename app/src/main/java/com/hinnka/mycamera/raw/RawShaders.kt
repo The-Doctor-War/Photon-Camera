@@ -98,8 +98,6 @@ object RawShaders {
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
-        uniform float uCurveWhitePoint;
-        uniform float uCurveShoulderStart;
         uniform vec2 uTexelSize;
         uniform float uHighlights;
         uniform float uShadows;
@@ -375,48 +373,19 @@ object RawShaders {
             return max(dot(color, vec3(0.2880402, 0.7118741, 0.0000857)), 1e-5);
         }
 
-        float highlightRolloffStart() {
-            return min(clamp(uCurveShoulderStart, 0.35, 0.95), uCurveWhitePoint - 0.01);
-        }
-
         float highlightRolloffLuma(float luma) {
-            if (uCurveWhitePoint <= 1.0) return luma;
+            const float rolloffStart = 0.2;
+            const float rolloffRange = 1.0 - rolloffStart;
+            if (luma <= rolloffStart) return luma;
 
-            float start = highlightRolloffStart();
-            if (luma <= start) return luma;
-
-            float S = (uCurveWhitePoint - start) / (1.0 - start);
-            float x = clamp((luma - start) / max(uCurveWhitePoint - start, 1e-6), 0.0, 1.0);
-            float y = ((S - 2.0) * x * x + (3.0 - 2.0 * S) * x + S) * x;
-
-            return start + y * (1.0 - start);
-        }
-
-        vec3 neutralizeClippedHighlight(vec3 color, float targetLuma) {
-            float peak = max(color.r, max(color.g, color.b));
-            if (peak <= 1.0) return color;
-
-            float trough = min(color.r, min(color.g, color.b));
-            float mid = color.r + color.g + color.b - peak - trough;
-            vec3 neutral = vec3(clamp(targetLuma, 0.0, 1.0));
-
-            float requiredNeutralMix = clamp(
-                (peak - 1.0) / max(peak - neutral.r, 1e-6),
-                0.0,
-                1.0
-            );
-            float multiChannelClip = smoothstep(1.0, 1.08, mid);
-            return mix(color, neutral, max(requiredNeutralMix, multiChannelClip));
+            float x = (luma - rolloffStart) / rolloffRange;
+            return 1.0 - rolloffRange / (1.0 + x);
         }
 
         vec3 highlightRolloff(vec3 color) {
-            if (uCurveWhitePoint <= 1.0) return color;
-
             float luma = proPhotoLuminance(color);
             float newLuma = highlightRolloffLuma(luma);
-            vec3 rolled = color * (newLuma / max(luma, 1e-6));
-
-            return neutralizeClippedHighlight(rolled, newLuma);
+            return color * (newLuma / max(luma, 1e-6));
         }
         
         vec3 applyDcpMaps(vec3 color) {

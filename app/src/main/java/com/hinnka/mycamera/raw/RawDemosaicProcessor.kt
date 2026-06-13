@@ -156,7 +156,7 @@ class RawDemosaicProcessor {
         private const val TAG = "RawDemosaicProcessor"
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
-        private const val DEFAULT_RAW_CHROMA_DENOISE_VALUE = 0.4f
+        private const val DEFAULT_RAW_CHROMA_DENOISE_VALUE = 0.5f
         private const val RCD_RAW_TEXTURE_UNIT = 0
         private const val RCD_LENS_SHADING_TEXTURE_UNIT = 1
         private const val RCD_OUTPUT_IMAGE_UNIT = 0
@@ -965,9 +965,10 @@ class RawDemosaicProcessor {
                     curveWhitePoint = meteringResult.curveWhitePoint
                 )
             } else {
-                MeteringSystem.resolveManualShadowsHighlightsParams(
-                    rawHighlightsAdjustment = rawHighlightsAdjustment,
-                    rawShadowsAdjustment = rawShadowsAdjustment
+                ShadowsHighlightsParams(
+                    highlights = rawHighlightsAdjustment,
+                    shadows = rawShadowsAdjustment,
+                    curveWhitePoint = meteringResult.curveWhitePoint
                 )
             }
             if (useAutoDevelopAdjustments) {
@@ -3713,7 +3714,8 @@ class RawDemosaicProcessor {
                     width = meteringWidth,
                     height = meteringHeight,
                     weightBuffer = weightBuffer,
-                    linearExposureGain = linearExposureGain
+                    linearExposureGain = linearExposureGain,
+                    baselineExposure = metadata.baselineExposure
                 )
 
                 if (depthMap != null && !depthMap.isRecycled) {
