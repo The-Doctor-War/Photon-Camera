@@ -581,22 +581,17 @@ class LutImageProcessor {
         uploadImageTexture(bitmap)
 
         renderBitmapChromaDenoise(imageTextureId, width, height, strength)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bitmapDenoiseFboId[0])
-
-        val pixelSize = width * height * 4
-        val pixelBuffer = obtainReadbackBuffer(pixelSize)
-        GLES30.glReadPixels(
-            0, 0, width, height,
-            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixelBuffer
+        performRender(
+            width = width,
+            height = height,
+            inputTextureId = bitmapDenoiseTexId[0],
+            inputColorSpace = bitmap.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB),
+            isHlgInput = false,
+            lutConfig = null,
+            effectiveRecipeParams = null,
+            sharpening = 0f,
+            lutMaskType = 0
         )
-        pixelBuffer.position(0)
-
-        val tempBitmap = createBitmap(width, height, colorSpace = bitmap.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB))
-        tempBitmap.copyPixelsFromBuffer(pixelBuffer)
-
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-
-        tempBitmap
     }
 
     private fun buildLchAdjustmentArrays(params: ColorRecipeParams?): Triple<FloatArray, FloatArray, FloatArray> {

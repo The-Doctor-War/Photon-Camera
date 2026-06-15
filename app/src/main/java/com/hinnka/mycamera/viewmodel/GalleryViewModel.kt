@@ -482,7 +482,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 if (!isRawInGallery(photo.id)) {
                     // 非 RAW 照片，先进行一次色度降噪
                     val lutProcessor = com.hinnka.mycamera.lut.LutImageProcessor()
-                    val chromaDenoised = lutProcessor.applyChromaDenoise(bitmap, strength = 0.5f)
+                    val chromaDenoised = lutProcessor.applyChromaDenoise(bitmap, strength = 0.8f)
                     lutProcessor.release()
                     if (chromaDenoised !== bitmap) {
                         bitmap.recycle()
