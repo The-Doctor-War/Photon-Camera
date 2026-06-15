@@ -799,6 +799,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val edgeLevel: StateFlow<Int> = userPreferencesRepository.userPreferences
         .map { it.edgeLevel }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
+    val vendorCaptureSettingsByLens: StateFlow<VendorCaptureSettingsByLens> =
+        userPreferencesRepository.userPreferences
+            .map { it.vendorCaptureSettingsByLens }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, VendorCaptureSettingsByLens.Empty)
     val rawColorEngine: StateFlow<RawColorEngine> = userPreferencesRepository.userPreferences
         .map { it.rawColorEngine }
         .stateIn(viewModelScope, SharingStarted.Eagerly, RawColorEngine.AdobeCurve)
@@ -1172,6 +1176,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 // 同步锐化等级到相机控制器
                 cameraController.setEdgeLevel(it.edgeLevel)
+                if (currentCameraState.vendorCaptureSettingsByLens != it.vendorCaptureSettingsByLens) {
+                    cameraController.setVendorCaptureSettingsByLens(it.vendorCaptureSettingsByLens)
+                }
                 // 同步 RAW 设置到相机控制器
                 val multipleExposureEnabled = it.useMultipleExposure
                 val effectiveUseRaw = it.useRaw && !multipleExposureEnabled
@@ -1408,7 +1415,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (availableCameras.isNotEmpty() && !hasAppliedDefaultFocalLength) {
                     val prefs = userPreferencesRepository.userPreferences.firstOrNull()
                     val defaultFL = prefs?.defaultFocalLength ?: 0f
-                    if (defaultFL > 0f) {
+                    if (defaultFL != 0f) {
                         applyDefaultFocalLength(defaultFL)
                     }
                     hasAppliedDefaultFocalLength = true
@@ -3322,6 +3329,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (nextIndex != currentIndex) {
             val targetZoom = zoomStops[nextIndex]
 
+            if (isCurrentLensCustomZoomRatioStop(targetZoom)) {
+                setZoomRatio(targetZoom)
+                return
+            }
+
             // 5. 检查是否需要切换镜头 (逻辑同步自 ZoomControlBar.kt)
             val optimalLens = findOptimalLens(targetZoom, availableCameras, currentCamera.cameraId)
             if (optimalLens != null && optimalLens.cameraId != currentCamera.cameraId) {
@@ -3376,6 +3388,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (stops.none { abs(it - 2f) <= 0.1f }) {
                 stops.add(2f)
             }
+            customFocalLengths.forEach { value ->
+                CustomFocalLengthValue.toZoomRatio(value, mainCamera, currentCamera)?.let { zoom ->
+                    if (stops.none { abs(it - zoom) <= 0.01f }) {
+                        stops.add(zoom)
+                    }
+                }
+            }
             return stops.sorted()
         }
 
@@ -3394,10 +3413,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         addDefaultMinimumZoomStop(stops, lensZoomStops, mainCamera, hiddenFocalLengths)
 
-        // 2. 添加自定义焦段 (不参与隐藏过滤)
-        if (mainCamera.focalLength35mmEquivalent > 0) {
-            customFocalLengths.forEach { fl ->
-                val zoom = fl / mainCamera.focalLength35mmEquivalent
+        // 2. 添加自定义焦段/倍率 (不参与隐藏过滤)
+        customFocalLengths.forEach { value ->
+            CustomFocalLengthValue.toZoomRatio(value, mainCamera, currentCamera)?.let { zoom ->
                 if (stops.none { abs(it - zoom) <= 0.01f }) {
                     stops.add(zoom)
                 }
@@ -3454,6 +3472,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             ?: tiedCandidates.firstOrNull()
     }
 
+    fun isCurrentLensCustomZoomRatioStop(targetZoom: Float): Boolean {
+        val currentState = state.value
+        val currentCamera = currentState.getCurrentCameraInfo() ?: return false
+        val mainCamera = currentState.availableCameras.find {
+            it.lensType == if (currentCamera.lensType == LensType.FRONT) LensType.FRONT else LensType.BACK_MAIN
+        } ?: return false
+        return userPreferences.value.customFocalLengths.any { value ->
+            CustomFocalLengthValue.isZoomRatio(value) &&
+                    abs((CustomFocalLengthValue.toZoomRatio(value, mainCamera, currentCamera) ?: return@any false) - targetZoom) <= 0.01f
+        }
+    }
+
     /**
      * 设置是否拍摄后自动保存
      */
@@ -3467,9 +3497,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val prefs = userPreferencesRepository.userPreferences.first()
             val list = prefs.customFocalLengths.toMutableList()
-            if (list.none { abs(it - focalLength) < 0.5f }) {
+            if (list.none { CustomFocalLengthValue.matches(it, focalLength) }) {
                 list.add(focalLength)
-                userPreferencesRepository.saveCustomFocalLengths(list.sorted())
+                userPreferencesRepository.saveCustomFocalLengths(
+                    list.sortedBy { CustomFocalLengthValue.sortKey(it, state.value.getCurrentCameraInfo()) }
+                )
             }
         }
     }
@@ -3478,11 +3510,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val prefs = userPreferencesRepository.userPreferences.first()
             val list = prefs.customFocalLengths.toMutableList()
-            list.removeAll { abs(it - focalLength) < 0.5f }
+            list.removeAll { CustomFocalLengthValue.matches(it, focalLength) }
             userPreferencesRepository.saveCustomFocalLengths(list)
 
             // 如果删除了当前的默认焦段，重置为0
-            if (abs(prefs.defaultFocalLength - focalLength) < 0.5f) {
+            if (CustomFocalLengthValue.matches(prefs.defaultFocalLength, focalLength)) {
                 userPreferencesRepository.saveDefaultFocalLength(0f)
             }
         }
@@ -3563,6 +3595,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setEdgeLevel(level: Int) {
         viewModelScope.launch {
             userPreferencesRepository.saveEdgeLevel(level)
+        }
+    }
+
+    fun setVendorCaptureSettings(lensId: String, settings: VendorCaptureSettings) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveVendorCaptureSettingsForLens(lensId, settings)
         }
     }
 
@@ -3695,9 +3733,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             it.lensType == if (currentCamera.lensType == LensType.FRONT) LensType.FRONT else LensType.BACK_MAIN
         } ?: return
 
-        if (mainCamera.focalLength35mmEquivalent <= 0) return
+        val targetZoom = CustomFocalLengthValue.toZoomRatio(focalLength, mainCamera, currentCamera) ?: return
 
-        val targetZoom = focalLength / mainCamera.focalLength35mmEquivalent
+        if (CustomFocalLengthValue.isZoomRatio(focalLength)) {
+            setZoomRatio(targetZoom)
+            PLog.d(
+                TAG,
+                "Applied default focal length: ${CustomFocalLengthValue.displayText(focalLength)} " +
+                        "on current lens ${currentCamera.cameraId} (zoom: $targetZoom)"
+            )
+            return
+        }
 
         // 找到该变焦倍率下的最佳镜头
         val optimalLens = findOptimalLens(targetZoom, availableCameras, currentCamera.cameraId)
@@ -3706,7 +3752,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             setZoomRatio(targetZoom)
         }
-        PLog.d(TAG, "Applied default focal length: ${focalLength}mm (zoom: $targetZoom)")
+        PLog.d(TAG, "Applied default focal length: ${CustomFocalLengthValue.displayText(focalLength)} (zoom: $targetZoom)")
     }
 
     /**

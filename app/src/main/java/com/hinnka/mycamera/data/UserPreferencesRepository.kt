@@ -11,8 +11,11 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.MeteringMode
+import com.hinnka.mycamera.camera.VendorCaptureSettings
+import com.hinnka.mycamera.camera.VendorCaptureSettingsByLens
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
@@ -113,6 +116,7 @@ data class UserPreferences(
     val autoSaveAfterCapture: Boolean = true,  // 自动保存
     val nrLevel: Int = 5,  // 降噪等级：0=Off, 1=Fast, 2=High Quality, 3=ZSL, 4=Minimal, 5=Auto
     val edgeLevel: Int = 1, // 锐化等级：0=Off, 1=Fast, 2=High Quality, 3=Real-time
+    val vendorCaptureSettingsByLens: VendorCaptureSettingsByLens = VendorCaptureSettingsByLens.Empty,
     val useRaw: Boolean = false,                // 使用 RAW 格式拍摄
     val meteringMode: MeteringMode = MeteringMode.CENTER_WEIGHTED, // 测光模式
     val sharpening: Float = 0f,              // 0.0 ~ 1.0 锐化强度
@@ -176,7 +180,7 @@ data class UserPreferences(
     val phantomSaveAsNew: Boolean = false,
     val useHdrScreenMode: Boolean = true,
     val defaultVirtualAperture: Float = 0f, // 默认虚化光圈，0表示关闭
-    val customFocalLengths: List<Float> = emptyList(), // 自定义焦段 (35mm等效)，最多8个
+    val customFocalLengths: List<Float> = emptyList(), // 自定义焦段/倍率，正数为35mm等效焦段，负数为精确倍率
     val customLensIds: List<String> = emptyList(), // 自定义镜头 ID，逗号分隔存储
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val preferredMainCameraId: String? = null, // 用户选择的主摄 ID
@@ -270,6 +274,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val AUTO_SAVE_AFTER_CAPTURE = booleanPreferencesKey("auto_save_after_capture")
         private val NR_LEVEL = intPreferencesKey("nr_level")
         private val EDGE_LEVEL = intPreferencesKey("edge_level")
+        private val VENDOR_CAPTURE_SETTINGS = stringPreferencesKey("vendor_capture_settings")
         private val USE_RAW = booleanPreferencesKey("use_raw")
         private val METERING_MODE = stringPreferencesKey("metering_mode")
 
@@ -416,6 +421,9 @@ class UserPreferencesRepository(private val context: Context) {
                 autoSaveAfterCapture = preferences[AUTO_SAVE_AFTER_CAPTURE] ?: true,
                 nrLevel = preferences[NR_LEVEL] ?: 5,
                 edgeLevel = preferences[EDGE_LEVEL] ?: 1,
+                vendorCaptureSettingsByLens = VendorCaptureSettingsByLens.deserialize(
+                    preferences[VENDOR_CAPTURE_SETTINGS]
+                ),
                 useRaw = preferences[USE_RAW] ?: false,
                 meteringMode = MeteringMode.valueOf(
                     preferences[METERING_MODE] ?: MeteringMode.CENTER_WEIGHTED.name
@@ -506,7 +514,7 @@ class UserPreferencesRepository(private val context: Context) {
                 defaultVirtualAperture = preferences[DEFAULT_VIRTUAL_APERTURE] ?: 0f,
                 customFocalLengths = preferences[CUSTOM_FOCAL_LENGTHS]
                     ?.split(",")?.filter { it.isNotEmpty() }
-                    ?.mapNotNull { it.toFloatOrNull() }
+                    ?.mapNotNull { CustomFocalLengthValue.parsePersisted(it) }
                     ?: listOf(35f, 50f, 85f, 200f),
                 customLensIds = parseLensIds(preferences[CUSTOM_LENS_IDS]),
                 lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
@@ -1005,6 +1013,19 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveVendorCaptureSettingsForLens(lensId: String, settings: VendorCaptureSettings) {
+        if (lensId.isBlank()) return
+        context.dataStore.edit { preferences ->
+            val currentSettings = VendorCaptureSettingsByLens.deserialize(preferences[VENDOR_CAPTURE_SETTINGS])
+            val updatedSettings = currentSettings.withSettings(lensId, settings)
+            if (updatedSettings.isEnabled) {
+                preferences[VENDOR_CAPTURE_SETTINGS] = updatedSettings.serialize()
+            } else {
+                preferences.remove(VENDOR_CAPTURE_SETTINGS)
+            }
+        }
+    }
+
     /**
      * 保存是否使用 RAW 格式
      */
@@ -1142,7 +1163,9 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun saveCustomFocalLengths(focalLengths: List<Float>) {
         context.dataStore.edit { preferences ->
-            preferences[CUSTOM_FOCAL_LENGTHS] = focalLengths.joinToString(",")
+            preferences[CUSTOM_FOCAL_LENGTHS] = focalLengths.joinToString(",") {
+                CustomFocalLengthValue.serialize(it)
+            }
         }
     }
 

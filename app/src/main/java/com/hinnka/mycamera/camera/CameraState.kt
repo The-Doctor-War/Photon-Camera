@@ -314,6 +314,7 @@ data class CameraState(
     // 降噪等级 (0=Off, 1=Fast, 2=High Quality, 3=ZSL, 4=Minimal, 5=Auto)
     val nrLevel: Int = 5,
     val availableNrModes: IntArray = intArrayOf(),
+    val vendorCaptureSettingsByLens: VendorCaptureSettingsByLens = VendorCaptureSettingsByLens.Empty,
 
     val isRawSupported: Boolean = false,
     val useMFNR: Boolean = false,

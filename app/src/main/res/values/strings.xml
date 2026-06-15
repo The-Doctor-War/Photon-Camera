@@ -244,6 +244,16 @@
     <string name="settings_nr_level_auto">Auto</string>
     <string name="settings_edge_level">Sharpening Level</string>
     <string name="settings_edge_level_description">Adjust the hardware edge enhancement (sharpening) mode.</string>
+    <string name="settings_vendor_capture_title">ISZ / DCG Vendor Keys</string>
+    <string name="settings_vendor_capture_description">Current lens: %1$s. These experimental device-specific keys apply only to this lens. Support is not guaranteed. If capture fails or the app crashes, turn these off.</string>
+    <string name="settings_vendor_capture_insensor_zoom">Qualcomm In-sensor Zoom</string>
+    <string name="settings_vendor_capture_qcom_sensor_mode">Qualcomm sensor mode</string>
+    <string name="settings_vendor_capture_vivo_sensor_mode">vivo force sensor mode</string>
+    <string name="settings_vendor_capture_oplus_agingtest_mode">Oplus aging test mode</string>
+    <string name="settings_vendor_capture_value_label">Value</string>
+    <string name="settings_vendor_capture_int_value">Int value</string>
+    <string name="settings_vendor_capture_byte_value">Byte value, -128 to 127</string>
+    <string name="settings_vendor_capture_invalid_value">Invalid value</string>
     <string name="settings_sharpening">Sharpening</string>
     <string name="settings_sharpening_description">Enhance image sharpness and edge definition</string>
     <string name="settings_noise_reduction">Noise Reduction</string>
@@ -626,7 +636,7 @@
     <string name="settings_lens_id_blacklist">Lens ID Blacklist</string>
     <string name="settings_lens_id_blacklist_description">Camera IDs separated by commas. These IDs will be skipped during active lens probing.</string>
     <string name="settings_custom_focal_length_add">Add Custom Focal Length</string>
-    <string name="settings_custom_focal_length_hint">e.g. 35, 50, 85</string>
+    <string name="settings_custom_focal_length_hint">e.g. 35, 50, 85, 2x, 4x</string>
     <string name="settings_dro_mode">RAW Dynamic Range Optimizer (DRO)</string>
     <string name="settings_dro_off">Off</string>
     <string name="settings_dro_dr100">DR100</string>

@@ -242,6 +242,16 @@
     <string name="settings_nr_level_auto">自动</string>
     <string name="settings_edge_level">锐化等级</string>
     <string name="settings_edge_level_description">调整系统硬件边缘增强（锐化）模式。</string>
+    <string name="settings_vendor_capture_title">ISZ / DCG 厂商 Key</string>
+    <string name="settings_vendor_capture_description">当前镜头：%1$s。这些实验性厂商参数仅针对当前镜头生效，不保证设备可用。如果出现无法拍摄或闪退，请关闭这些设置。</string>
+    <string name="settings_vendor_capture_insensor_zoom">Qualcomm 传感器内变焦</string>
+    <string name="settings_vendor_capture_qcom_sensor_mode">Qualcomm 传感器模式</string>
+    <string name="settings_vendor_capture_vivo_sensor_mode">vivo 强制传感器模式</string>
+    <string name="settings_vendor_capture_oplus_agingtest_mode">Oplus Aging Test 模式</string>
+    <string name="settings_vendor_capture_value_label">数值</string>
+    <string name="settings_vendor_capture_int_value">Int 数值</string>
+    <string name="settings_vendor_capture_byte_value">Byte 数值，范围 -128 到 127</string>
+    <string name="settings_vendor_capture_invalid_value">数值无效</string>
     <string name="settings_sharpening">锐化</string>
     <string name="settings_sharpening_description">增强图像锐度和边缘清晰度</string>
     <string name="settings_noise_reduction">降噪</string>
@@ -617,7 +627,7 @@
     <string name="settings_lens_id_blacklist">镜头 ID 黑名单</string>
     <string name="settings_lens_id_blacklist_description">多个相机 ID 用逗号分隔。填入的 ID 将不再被主动探测。</string>
     <string name="settings_custom_focal_length_add">添加自定义焦段</string>
-    <string name="settings_custom_focal_length_hint">如：35、50、85</string>
+    <string name="settings_custom_focal_length_hint">如：35、50、85、2x、4x</string>
     <string name="settings_dro_mode">RAW动态范围优化 (DRO)</string>
     <string name="settings_dro_off">关闭</string>
     <string name="settings_dro_dr100">DR100</string>

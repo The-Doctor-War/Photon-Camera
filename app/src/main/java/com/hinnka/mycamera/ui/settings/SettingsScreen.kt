@@ -104,8 +104,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.LensType
 import com.hinnka.mycamera.camera.MultiFrameConfig
+import com.hinnka.mycamera.camera.VendorCaptureKey
+import com.hinnka.mycamera.camera.VendorCaptureSettings
+import com.hinnka.mycamera.camera.VendorCaptureValueType
 import com.hinnka.mycamera.data.AiFocusTargetMode
 import com.hinnka.mycamera.data.VolumeKeyAction
 import com.hinnka.mycamera.frame.FrameInfo
@@ -219,6 +223,7 @@ fun SettingsScreen(
     val autoSaveAfterCapture by viewModel.autoSaveAfterCapture.collectAsState(initial = true)
     val nrLevel by viewModel.nrLevel.collectAsState(initial = 5)
     val edgeLevel by viewModel.edgeLevel.collectAsState(initial = 1)
+    val vendorCaptureSettingsByLens by viewModel.vendorCaptureSettingsByLens.collectAsState()
     val useRaw by viewModel.useRaw.collectAsState(initial = false)
     val exportDngWithRawExport by viewModel.exportDngWithRawExport.collectAsState(initial = true)
     val useSuperResolution by viewModel.useMFSR.collectAsState(initial = false)
@@ -1031,6 +1036,33 @@ fun SettingsScreen(
                             ),
                             currentLevel = edgeLevel,
                             onLevelSelected = { viewModel.setEdgeLevel(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        val currentVendorCaptureLensId = state.currentCameraId
+                        val currentVendorCaptureLensName = state.getCurrentCameraInfo()?.let { info ->
+                            val prefix = when (info.lensFacing) {
+                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> stringResource(R.string.rear_camera)
+                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> stringResource(R.string.front_camera)
+                                else -> stringResource(R.string.camera)
+                            }
+                            "$prefix ${info.cameraId}"
+                        } ?: if (currentVendorCaptureLensId.isNotBlank()) {
+                            currentVendorCaptureLensId
+                        } else {
+                            stringResource(R.string.current_camera)
+                        }
+                        VendorCaptureSettingsPanel(
+                            currentLensId = currentVendorCaptureLensId,
+                            currentLensName = currentVendorCaptureLensName,
+                            settings = vendorCaptureSettingsByLens.settingsFor(currentVendorCaptureLensId),
+                            onSettingsChange = {
+                                viewModel.setVendorCaptureSettings(currentVendorCaptureLensId, it)
+                            }
                         )
 
                         HorizontalDivider(
@@ -3048,6 +3080,159 @@ private fun PremiumCard(
  * 图像质量等级设置（通用组件）
  */
 @Composable
+private fun VendorCaptureSettingsPanel(
+    currentLensId: String,
+    currentLensName: String,
+    settings: VendorCaptureSettings,
+    onSettingsChange: (VendorCaptureSettings) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.settings_vendor_capture_title),
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Text(
+            text = stringResource(R.string.settings_vendor_capture_description, currentLensName),
+            color = Color(0xFFFFB74D),
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        VendorCaptureKey.entries.forEachIndexed { index, key ->
+            if (index > 0) {
+                HorizontalDivider(
+                    color = Color.White.copy(alpha = 0.08f),
+                    modifier = Modifier.padding(vertical = 10.dp)
+                )
+            }
+            VendorCaptureKeySettingItem(
+                key = key,
+                currentLensId = currentLensId,
+                settings = settings,
+                onSettingsChange = onSettingsChange
+            )
+        }
+    }
+}
+
+@Composable
+private fun VendorCaptureKeySettingItem(
+    key: VendorCaptureKey,
+    currentLensId: String,
+    settings: VendorCaptureSettings,
+    onSettingsChange: (VendorCaptureSettings) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val enabled = settings.isEnabled(key)
+    val currentValue = settings.valueFor(key)
+    var valueText by remember(key, currentLensId, currentValue) { mutableStateOf(currentValue.toString()) }
+    val parsedValue = valueText.toIntOrNull()
+    val isValueValid = parsedValue != null && key.normalizeValue(parsedValue) == parsedValue
+    val description = key.requestKeyName
+    val valueRangeDescription = when (key.valueType) {
+        VendorCaptureValueType.INT -> stringResource(R.string.settings_vendor_capture_int_value)
+        VendorCaptureValueType.BYTE -> stringResource(R.string.settings_vendor_capture_byte_value)
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = key.displayName(),
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Normal
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Switch(
+                checked = enabled,
+                onCheckedChange = { checked ->
+                    val value = parsedValue?.let { key.normalizeValue(it) } ?: key.defaultValue
+                    onSettingsChange(settings.withOverride(key, checked, value))
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Color(0xFFFF6B35),
+                    uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                    uncheckedTrackColor = Color.White.copy(alpha = 0.2f)
+                )
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(10.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = valueText,
+                onValueChange = { newValue ->
+                    valueText = newValue
+                    val updatedValue = newValue.toIntOrNull()
+                    if (updatedValue != null && key.normalizeValue(updatedValue) == updatedValue) {
+                        onSettingsChange(settings.withValue(key, updatedValue))
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.settings_vendor_capture_value_label)) },
+                supportingText = {
+                    Text(
+                        text = if (isValueValid) {
+                            valueRangeDescription
+                        } else {
+                            stringResource(R.string.settings_vendor_capture_invalid_value)
+                        }
+                    )
+                },
+                isError = !isValueValid,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFFE5A324),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                    focusedLabelColor = Color(0xFFE5A324),
+                    unfocusedLabelColor = Color.White.copy(alpha = 0.6f),
+                    focusedSupportingTextColor = Color.White.copy(alpha = 0.55f),
+                    unfocusedSupportingTextColor = Color.White.copy(alpha = 0.55f),
+                    errorTextColor = Color.White,
+                    errorSupportingTextColor = Color(0xFFFF8A80),
+                    errorBorderColor = Color(0xFFFF8A80),
+                    cursorColor = Color(0xFFE5A324)
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun VendorCaptureKey.displayName(): String {
+    return when (this) {
+        VendorCaptureKey.INSENSOR_ZOOM -> stringResource(R.string.settings_vendor_capture_insensor_zoom)
+        VendorCaptureKey.QCOM_SENSOR_CURRENT_MODE -> stringResource(R.string.settings_vendor_capture_qcom_sensor_mode)
+        VendorCaptureKey.VIVO_FORCE_SENSOR_MODE -> stringResource(R.string.settings_vendor_capture_vivo_sensor_mode)
+        VendorCaptureKey.OPLUS_AGINGTEST_MODE_SELECT -> stringResource(R.string.settings_vendor_capture_oplus_agingtest_mode)
+    }
+}
+
+@Composable
 fun <T> QualityLevelSetting(
     title: String,
     description: String,
@@ -3257,7 +3442,7 @@ fun DefaultFocalLengthSetting(
                 FocalLengthChip(
                     focalLength = fl,
                     isCustom = true,
-                    isSelected = abs(currentFocalLength - fl) < 0.5f,
+                    isSelected = CustomFocalLengthValue.matches(currentFocalLength, fl),
                     isHidden = false,
                     onSelect = { onFocalLengthSelected(fl) },
                     onToggleVisibility = { },
@@ -3297,17 +3482,20 @@ fun DefaultFocalLengthSetting(
             text = {
                 androidx.compose.material3.OutlinedTextField(
                     value = inputValue,
-                    onValueChange = { inputValue = it.filter { c -> c.isDigit() || c == '.' } },
+                    onValueChange = {
+                        inputValue = it.filter { c -> c.isDigit() || c == '.' || c == 'x' || c == 'X' }
+                    },
                     placeholder = { Text(stringResource(R.string.settings_custom_focal_length_hint)) },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    suffix = { Text("mm") }
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val fl = inputValue.toFloatOrNull()
+                    val fl = CustomFocalLengthValue.parseInput(inputValue)
                     if (fl != null && fl > 0f) {
+                        viewModel.addCustomFocalLength(fl)
+                    } else if (fl != null && CustomFocalLengthValue.isZoomRatio(fl)) {
                         viewModel.addCustomFocalLength(fl)
                     }
                     showAddDialog = false
@@ -3520,7 +3708,7 @@ private fun FocalLengthChip(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "${focalLength.roundToInt()}mm${if (isCustom) "*" else ""}",
+                text = "${CustomFocalLengthValue.displayText(focalLength)}${if (isCustom) "*" else ""}",
                 color = if (isSelected) Color.White else if (isHidden) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.7f),
                 fontSize = 11.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,

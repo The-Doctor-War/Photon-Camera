@@ -1534,6 +1534,38 @@ class Camera2Controller(private val context: Context) {
         }
 
         setZslDisabledIfSupported(builder)
+        applyVendorCaptureSettings(builder, isCapture)
+    }
+
+    private fun applyVendorCaptureSettings(builder: CaptureRequest.Builder, isCapture: Boolean) {
+//        if (!isCapture) return
+        val state = _state.value
+        val lensId = state.currentCameraId
+        val settings = state.vendorCaptureSettingsByLens.settingsFor(lensId)
+        if (!settings.isEnabled) return
+
+        settings.values.forEach { (key, value) ->
+            try {
+                when (key.valueType) {
+                    VendorCaptureValueType.INT -> {
+                        builder.set(
+                            CaptureRequest.Key(key.requestKeyName, Int::class.java),
+                            value
+                        )
+                    }
+
+                    VendorCaptureValueType.BYTE -> {
+                        builder.set(
+                            CaptureRequest.Key(key.requestKeyName, Byte::class.java),
+                            key.normalizeValue(value).toByte()
+                        )
+                    }
+                }
+                PLog.d(TAG, "Applied vendor capture key for lens $lensId: ${key.requestKeyName}=${key.normalizeValue(value)}")
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
+            }
+        }
     }
 
     private fun setZslDisabledIfSupported(builder: CaptureRequest.Builder) {
@@ -2200,6 +2232,11 @@ class Camera2Controller(private val context: Context) {
     fun setNRLevel(level: Int) {
         nrLevel = level
         _state.value = _state.value.copy(nrLevel = level)
+    }
+
+    fun setVendorCaptureSettingsByLens(settingsByLens: VendorCaptureSettingsByLens) {
+        _state.value = _state.value.copy(vendorCaptureSettingsByLens = settingsByLens)
+        PLog.d(TAG, "Vendor capture lens settings count: ${settingsByLens.settingsByLensId.size}")
     }
 
     /**

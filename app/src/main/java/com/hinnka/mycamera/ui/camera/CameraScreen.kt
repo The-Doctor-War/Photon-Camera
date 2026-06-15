@@ -393,6 +393,10 @@ fun CameraScreen(
     }
 
     fun setZoomWithPreviewTransition(targetZoom: Float) {
+        if (viewModel.isCurrentLensCustomZoomRatioStop(targetZoom)) {
+            viewModel.setZoomRatio(targetZoom)
+            return
+        }
         val currentCamera = state.getCurrentCameraInfo()
         val currentCameraId = currentCamera?.cameraId ?: "0"
         val camera = viewModel.findOptimalLens(
