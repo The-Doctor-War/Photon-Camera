@@ -60,6 +60,7 @@ object RawHdrFusionProcessor {
         blackLevel: FloatArray,
         whiteLevel: Int,
         noiseModel: FloatArray,
+        enableDeghostMask: Boolean = true,
     ): RawHdrFusionResult? = withContext(dispatcher) {
         if (frames.size != FRAME_COUNT) {
             PLog.w(TAG, "Expected $FRAME_COUNT RAW HDR frames, got ${frames.size}")
@@ -101,13 +102,14 @@ object RawHdrFusionProcessor {
                     whiteLevel = whiteLevel,
                     exposureScales = exposureScales,
                     noiseModel = normalizedNoiseModel,
+                    enableDeghostMask = enableDeghostMask,
                 )
             }
             outputBuffer.rewind()
             returned = true
             PLog.d(
                 TAG,
-                "RAW HDR fusion took ${elapsed}ms, size=${width}x$height, exposureScales=${exposureScales.joinToString()}"
+                "RAW HDR fusion took ${elapsed}ms, size=${width}x$height, deghostMask=$enableDeghostMask, exposureScales=${exposureScales.joinToString()}"
             )
             RawHdrFusionResult(
                 fusedBayerBuffer = outputBuffer,
@@ -137,6 +139,7 @@ object RawHdrFusionProcessor {
         whiteLevel: Int,
         exposureScales: FloatArray,
         noiseModel: FloatArray,
+        enableDeghostMask: Boolean,
     ) {
         val inputTextures = frames.map { uploadRawTexture(it) }
         var target: RenderTarget? = null
@@ -174,6 +177,10 @@ object RawHdrFusionProcessor {
                 GLES30.glGetUniformLocation(fusionProgram, "uNoiseModel"),
                 noiseModel[0],
                 noiseModel[1]
+            )
+            GLES30.glUniform1i(
+                GLES30.glGetUniformLocation(fusionProgram, "uUseDeghostMask"),
+                if (enableDeghostMask) 1 else 0
             )
             drawQuad(fusionProgram)
             checkGlError("renderFusion")
@@ -533,6 +540,7 @@ object RawHdrFusionProcessor {
         uniform float uExposureScale[3];
         uniform int uValueDomain[3];
         uniform vec2 uNoiseModel;
+        uniform int uUseDeghostMask;
 
         int channelIndex(ivec2 p) {
             int x = p.x - (p.x / 2) * 2;
@@ -604,6 +612,104 @@ object RawHdrFusionProcessor {
             return pow(laplacian + 0.0005, 0.25);
         }
 
+        float noiseVariance(int frame, float norm, int channel) {
+            float sensorRange = max(1.0, uWhiteLevel - uBlackLevel[channel]);
+            float sensorSignal = norm * sensorRange;
+            float variance = max(0.0000001, (uNoiseModel.x * sensorSignal + uNoiseModel.y) / (sensorRange * sensorRange));
+            float scale = uExposureScale[frame];
+            return variance * scale * scale;
+        }
+
+        float scaledLinearAt(int frame, ivec2 p, int channel) {
+            return frameNorm(frame, p, channel) * uExposureScale[frame];
+        }
+
+        float captureTrust(int frame, ivec2 p, int channel) {
+            float norm = frameNorm(frame, p, channel);
+            float scaledSignal = norm * uExposureScale[frame];
+            float sigma = sqrt(noiseVariance(frame, norm, channel));
+            float snr = scaledSignal / max(sigma, 0.000001);
+            float shadowGate = smoothstep(2.0, 6.0, snr);
+            float highlightGate = 1.0 - smoothstep(0.90, 0.995, norm);
+            return clamp(shadowGate * highlightGate, 0.0, 1.0);
+        }
+
+        float referenceStructure(ivec2 p, int channel) {
+            float c = scaledLinearAt(1, p, channel);
+            float left = scaledLinearAt(1, sameColorCoord(p, ivec2(-2, 0)), channel);
+            float right = scaledLinearAt(1, sameColorCoord(p, ivec2(2, 0)), channel);
+            float up = scaledLinearAt(1, sameColorCoord(p, ivec2(0, -2)), channel);
+            float down = scaledLinearAt(1, sameColorCoord(p, ivec2(0, 2)), channel);
+            float gradient = abs(right - left) + abs(down - up);
+            float laplacian = abs(left + right + up + down - 4.0 * c);
+            float referenceNorm = frameNorm(1, p, channel);
+            float sigma = sqrt(noiseVariance(1, referenceNorm, channel));
+            float structureFloor = max(0.0015, sigma * 3.0);
+            return smoothstep(structureFloor * 2.0, structureFloor * 8.0, gradient + 0.5 * laplacian);
+        }
+
+        float censusMismatch(int frame, ivec2 p, int channel, float refCenter, float sideCenter) {
+            float mismatch = 0.0;
+            float count = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    if (x == 0 && y == 0) {
+                        continue;
+                    }
+                    ivec2 coord = sameColorCoord(p, ivec2(x * 2, y * 2));
+                    float refNeighbor = scaledLinearAt(1, coord, channel);
+                    float sideNeighbor = scaledLinearAt(frame, coord, channel);
+                    float refRank = refNeighbor > refCenter ? 1.0 : 0.0;
+                    float sideRank = sideNeighbor > sideCenter ? 1.0 : 0.0;
+                    mismatch += abs(refRank - sideRank);
+                    count += 1.0;
+                }
+            }
+            return mismatch / max(count, 1.0);
+        }
+
+        float deghostScoreAt(int frame, ivec2 p, int channel) {
+            float sideNorm = frameNorm(frame, p, channel);
+            float referenceNorm = frameNorm(1, p, channel);
+            float sideSignal = sideNorm * uExposureScale[frame];
+            float referenceSignal = referenceNorm * uExposureScale[1];
+
+            float comparable = captureTrust(frame, p, channel) * captureTrust(1, p, channel) * referenceStructure(p, channel);
+            if (comparable <= 0.001) {
+                return 0.0;
+            }
+
+            float sideVariance = noiseVariance(frame, sideNorm, channel);
+            float referenceVariance = noiseVariance(1, referenceNorm, channel);
+            float residualSigma = sqrt(sideVariance + referenceVariance);
+            float residual = abs(sideSignal - referenceSignal);
+            float residualLow = max(0.004, residualSigma * 3.0);
+            float residualHigh = max(0.020, residualSigma * 8.0);
+            float linearMotion = smoothstep(residualLow, residualHigh, residual);
+
+            float exposureRatio = clamp(uExposureScale[1] / max(uExposureScale[frame], 1e-6), 0.03125, 32.0);
+            float exposureGap = abs(log2(exposureRatio));
+            float logResidual = abs(log(max(sideSignal, 1e-5)) - log(max(referenceSignal, 1e-5)));
+            float logMotion = smoothstep(0.28 + 0.04 * min(exposureGap, 3.0), 0.72, logResidual);
+            float rankMotion = smoothstep(0.32, 0.68, censusMismatch(frame, p, channel, referenceSignal, sideSignal));
+            float score = max(max(linearMotion, logMotion), rankMotion);
+            return comparable * score;
+        }
+
+        float computeDeghostAlpha(int frame, ivec2 p, int channel) {
+            if (uUseDeghostMask == 0 || frame == 1) {
+                return 1.0;
+            }
+            float score = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    score = max(score, deghostScoreAt(frame, sameColorCoord(p, ivec2(x * 2, y * 2)), channel));
+                }
+            }
+            float reject = smoothstep(0.48, 0.86, score);
+            return mix(1.0, 0.015, reject);
+        }
+
         float frameWeight(int frame, ivec2 p, int channel, out float scaledSignal) {
             float norm = frameNorm(frame, p, channel);
             float scale = uExposureScale[frame];
@@ -622,7 +728,8 @@ object RawHdrFusionProcessor {
             float scaledVariance = variance * scale * scale;
             float wiener = (scaledSignal * scaledSignal) / (scaledSignal * scaledSignal + scaledVariance + 0.000001);
 
-            return clipWeight * (0.25 + centered) * (0.2 + contrast) * (0.25 + wiener);
+            return clipWeight * (0.25 + centered) * (0.2 + contrast) * (0.25 + wiener) *
+                computeDeghostAlpha(frame, p, channel);
         }
 
         void main() {
