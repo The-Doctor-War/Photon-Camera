@@ -223,6 +223,11 @@ class RawDemosaicProcessor {
     private var rcdStep42Program = 0
     private var rcdStep43Program = 0
     private var rcdWriteOutputProgram = 0
+    private var quadPopulateProgram = 0
+    private var quadGreenProgram = 0
+    private var quadChromaProgram = 0
+    private var quadRefineProgram = 0
+    private var quadWriteOutputProgram = 0
     private var linearRcdProgram = 0
     private var rawAeBaseProgram = 0
     private var rawAeMertensProgram = 0
@@ -722,6 +727,9 @@ class RawDemosaicProcessor {
             // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
             actualRawData = null
 
+            if (RawMetadata.isQuadBayer(actualMetadata.cfaPattern)) {
+                runQuadBayerDemosaic(actualMetadata, actualWidth, actualHeight)
+            } else {
             // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
             val ssboIds = IntArray(9)
             GLES31.glGenBuffers(9, ssboIds, 0)
@@ -971,6 +979,7 @@ class RawDemosaicProcessor {
             GLES31.glDeleteBuffers(9, ssboIds, 0)
             for (i in 0 until 8) {
                 GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
+            }
             }
 
             val linearExposureGain = computeLinearExposureGain(
@@ -1322,6 +1331,8 @@ class RawDemosaicProcessor {
                 rcdPopulateProgram == 0 || rcdStep1Program == 0 || rcdStep2Program == 0 ||
                 rcdStep3Program == 0 || rcdStep40Program == 0 || rcdStep41Program == 0 ||
                 rcdStep42Program == 0 || rcdStep43Program == 0 || rcdWriteOutputProgram == 0 ||
+                quadPopulateProgram == 0 || quadGreenProgram == 0 || quadChromaProgram == 0 ||
+                quadRefineProgram == 0 || quadWriteOutputProgram == 0 ||
                 linearRcdProgram == 0
             ) {
                 PLog.e(
@@ -1331,6 +1342,9 @@ class RawDemosaicProcessor {
                             "populate=$rcdPopulateProgram step1=$rcdStep1Program step2=$rcdStep2Program " +
                             "step3=$rcdStep3Program step40=$rcdStep40Program step41=$rcdStep41Program " +
                             "step42=$rcdStep42Program step43=$rcdStep43Program write=$rcdWriteOutputProgram " +
+                            "quadPopulate=$quadPopulateProgram quadGreen=$quadGreenProgram " +
+                            "quadChroma=$quadChromaProgram quadRefine=$quadRefineProgram " +
+                            "quadWrite=$quadWriteOutputProgram " +
                             "linearRcd=$linearRcdProgram"
                 )
                 return false
@@ -1844,6 +1858,11 @@ class RawDemosaicProcessor {
         rcdStep42Program = compileComputeProgram(RcdShaders.STEP_4_2, "STEP_4_2")
         rcdStep43Program = compileComputeProgram(RcdShaders.STEP_4_3, "STEP_4_3")
         rcdWriteOutputProgram = compileComputeProgram(RcdShaders.WRITE_OUTPUT, "WRITE_OUTPUT")
+        quadPopulateProgram = compileComputeProgram(QuadBayerShaders.POPULATE, "QUAD_POPULATE")
+        quadGreenProgram = compileComputeProgram(QuadBayerShaders.GREEN, "QUAD_GREEN")
+        quadChromaProgram = compileComputeProgram(QuadBayerShaders.CHROMA, "QUAD_CHROMA")
+        quadRefineProgram = compileComputeProgram(QuadBayerShaders.REFINE, "QUAD_REFINE")
+        quadWriteOutputProgram = compileComputeProgram(QuadBayerShaders.WRITE_OUTPUT, "QUAD_WRITE_OUTPUT")
         rawAeBaseProgram = compileComputeProgram(RAW_AE_BASE_COMPUTE_SHADER, "RAW_AE_BASE")
         rawAeMertensProgram = compileComputeProgram(RAW_AE_MERTENS_COMPUTE_SHADER, "RAW_AE_MERTENS")
 
@@ -2966,7 +2985,163 @@ class RawDemosaicProcessor {
         return width > 0 && height > 0 && map.size >= width * height * 4
     }
 
+    private fun runQuadBayerDemosaic(
+        metadata: RawMetadata,
+        width: Int,
+        height: Int
+    ) {
+        val ssboIds = IntArray(6)
+        GLES31.glGenBuffers(6, ssboIds, 0)
+        val extraMargin = 1024 * 1024
+        val fullSize = width * height * 4 + extraMargin
+        for (i in 0 until 6) {
+            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, ssboIds[i])
+            GLES31.glBufferData(
+                GLES31.GL_SHADER_STORAGE_BUFFER,
+                fullSize,
+                null,
+                GLES31.GL_DYNAMIC_DRAW
+            )
+            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, ssboIds[i])
+        }
+        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
+
+        val blackLevel4 = FloatArray(4) { idx ->
+            metadata.blackLevel.getOrElse(idx) {
+                metadata.blackLevel.firstOrNull() ?: 0f
+            }.coerceAtLeast(0f)
+        }
+        val wbGains = metadata.whiteBalanceGains
+        val lscSize = if (hasValidLensShadingMap(metadata)) {
+            "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight}"
+        } else {
+            "none"
+        }
+
+        GLES31.glUseProgram(quadPopulateProgram)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_RAW_TEXTURE_UNIT)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rawTextureId)
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uRawTexture"),
+            RCD_RAW_TEXTURE_UNIT
+        )
+        bindLensShadingForProgram(quadPopulateProgram, metadata)
+        GLES31.glUniform2i(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uImageSize"),
+            width,
+            height
+        )
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uCfaPattern"),
+            metadata.cfaPattern
+        )
+        GLES31.glUniform4fv(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uBlackLevel"),
+            1,
+            blackLevel4,
+            0
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uWhiteLevel"),
+            metadata.whiteLevel
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uHighlightClipThreshold"),
+            RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uHighlightCeiling"),
+            RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
+        )
+        GLES31.glUniform4fv(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uWhiteBalanceGains"),
+            1,
+            wbGains,
+            0
+        )
+        PLog.d(
+            TAG,
+            "Quad Bayer populate: cfa=${metadata.cfaPattern} black=${blackLevel4.contentToString()} " +
+                    "white=${metadata.whiteLevel} wb=${wbGains.contentToString()} lsc=$lscSize " +
+                    "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
+                    "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING"
+        )
+        GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+        checkGlError("Quad Bayer Populate")
+
+        GLES31.glUseProgram(quadGreenProgram)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(quadGreenProgram, "uImageSize"), width, height)
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadGreenProgram, "uCfaPattern"),
+            metadata.cfaPattern
+        )
+        GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+        checkGlError("Quad Bayer Green")
+
+        GLES31.glUseProgram(quadChromaProgram)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(quadChromaProgram, "uImageSize"), width, height)
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadChromaProgram, "uCfaPattern"),
+            metadata.cfaPattern
+        )
+        GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+        checkGlError("Quad Bayer Chroma")
+
+        GLES31.glUseProgram(quadRefineProgram)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(quadRefineProgram, "uImageSize"), width, height)
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadRefineProgram, "uCfaPattern"),
+            metadata.cfaPattern
+        )
+        GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+        checkGlError("Quad Bayer Refine")
+
+        GLES31.glUseProgram(quadWriteOutputProgram)
+        GLES31.glUniform2i(
+            GLES31.glGetUniformLocation(quadWriteOutputProgram, "uImageSize"),
+            width,
+            height
+        )
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(quadWriteOutputProgram, "uBorder"), 4)
+        GLES31.glBindImageTexture(
+            RCD_OUTPUT_IMAGE_UNIT,
+            demosaicTextureId,
+            0,
+            false,
+            0,
+            GLES31.GL_WRITE_ONLY,
+            GLES31.GL_RGBA16F
+        )
+        GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_ALL_BARRIER_BITS)
+        checkGlError("Quad Bayer Write Output")
+
+        GLES31.glBindImageTexture(
+            RCD_OUTPUT_IMAGE_UNIT,
+            0,
+            0,
+            false,
+            0,
+            GLES31.GL_WRITE_ONLY,
+            GLES31.GL_RGBA16F
+        )
+
+        GLES30.glFinish()
+        GLES31.glDeleteBuffers(6, ssboIds, 0)
+        for (i in 0 until 6) {
+            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
+        }
+    }
+
     private fun bindLensShadingForRcdPopulate(metadata: RawMetadata) {
+        bindLensShadingForProgram(rcdPopulateProgram, metadata)
+    }
+
+    private fun bindLensShadingForProgram(program: Int, metadata: RawMetadata) {
         val enabled = hasValidLensShadingMap(metadata)
         GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_LENS_SHADING_TEXTURE_UNIT)
         if (enabled) {
@@ -2976,26 +3151,26 @@ class RawDemosaicProcessor {
             GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, 0)
         }
         GLES31.glUniform1i(
-            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingMap"),
+            GLES31.glGetUniformLocation(program, "uLensShadingMap"),
             RCD_LENS_SHADING_TEXTURE_UNIT
         )
         GLES31.glUniform1i(
-            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingEnabled"),
+            GLES31.glGetUniformLocation(program, "uLensShadingEnabled"),
             if (enabled) 1 else 0
         )
         GLES31.glUniform2f(
-            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingMapSize"),
+            GLES31.glGetUniformLocation(program, "uLensShadingMapSize"),
             metadata.lensShadingMapWidth.toFloat(),
             metadata.lensShadingMapHeight.toFloat()
         )
         val grid = metadata.lensShadingMapGrid
         val usesDngGrid = enabled && grid != null && grid.size >= 4
         GLES31.glUniform1i(
-            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingUsesDngGrid"),
+            GLES31.glGetUniformLocation(program, "uLensShadingUsesDngGrid"),
             if (usesDngGrid) 1 else 0
         )
         GLES31.glUniform4f(
-            GLES31.glGetUniformLocation(rcdPopulateProgram, "uLensShadingGrid"),
+            GLES31.glGetUniformLocation(program, "uLensShadingGrid"),
             grid?.getOrElse(0) { 0f } ?: 0f,
             grid?.getOrElse(1) { 0f } ?: 0f,
             grid?.getOrElse(2) { 1f } ?: 1f,
@@ -4843,6 +5018,11 @@ class RawDemosaicProcessor {
         if (rcdStep42Program != 0) GLES31.glDeleteProgram(rcdStep42Program)
         if (rcdStep43Program != 0) GLES31.glDeleteProgram(rcdStep43Program)
         if (rcdWriteOutputProgram != 0) GLES31.glDeleteProgram(rcdWriteOutputProgram)
+        if (quadPopulateProgram != 0) GLES31.glDeleteProgram(quadPopulateProgram)
+        if (quadGreenProgram != 0) GLES31.glDeleteProgram(quadGreenProgram)
+        if (quadChromaProgram != 0) GLES31.glDeleteProgram(quadChromaProgram)
+        if (quadRefineProgram != 0) GLES31.glDeleteProgram(quadRefineProgram)
+        if (quadWriteOutputProgram != 0) GLES31.glDeleteProgram(quadWriteOutputProgram)
         if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
         if (rawAeBaseProgram != 0) GLES31.glDeleteProgram(rawAeBaseProgram)
         if (rawAeMertensProgram != 0) GLES31.glDeleteProgram(rawAeMertensProgram)

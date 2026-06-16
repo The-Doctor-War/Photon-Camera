@@ -18,7 +18,7 @@ enum class RawColorEngine(
         shaderId = 0,
         workingColorSpace = ColorSpace.ProPhoto,
         defaultExposureCompensationEv = 0f,
-        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        meteringCompensationEv = 1f,
         exposureCompensationDomain = RawExposureCompensationDomain.Curve
     ),
     DarktableFilmic(

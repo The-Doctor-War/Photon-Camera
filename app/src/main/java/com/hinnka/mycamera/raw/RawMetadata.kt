@@ -24,6 +24,7 @@ data class RawMetadata(
     /**
      * CFA（彩色滤波阵列）排列模式
      * 0 = RGGB, 1 = GRBG, 2 = GBRG, 3 = BGGR
+     * 4 = Quad RGGB, 5 = Quad GRBG, 6 = Quad GBRG, 7 = Quad BGGR
      */
     val cfaPattern: Int,
 
@@ -90,6 +91,14 @@ data class RawMetadata(
         const val CFA_GRBG = 1
         const val CFA_GBRG = 2
         const val CFA_BGGR = 3
+        const val CFA_QUAD_RGGB = 4
+        const val CFA_QUAD_GRBG = 5
+        const val CFA_QUAD_GBRG = 6
+        const val CFA_QUAD_BGGR = 7
+
+        fun isQuadBayer(cfaPattern: Int): Boolean {
+            return cfaPattern in CFA_QUAD_RGGB..CFA_QUAD_BGGR
+        }
 
         /**
          * 从 CameraCharacteristics 和 CaptureResult 创建 RawMetadata

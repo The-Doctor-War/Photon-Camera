@@ -429,7 +429,86 @@ static float sampleDngGainMapBilinear(const DngGainMap &gainMap, float x, float 
   return top + (bottom - top) * ty;
 }
 
-static void computeEffectiveBlackLevels(LibRaw &rawProcessor, float out[4]) {
+static int quadChannelIndexForPattern(int cfaPattern, int col, int row) {
+  const int pattern = cfaPattern >= 4 ? cfaPattern - 4 : cfaPattern;
+  const int blockCol = (col / 2) & 1;
+  const int blockRow = (row / 2) & 1;
+  if (pattern == 0) { // Quad RGGB
+    return blockRow == 0 ? (blockCol == 0 ? 0 : 1) : (blockCol == 0 ? 2 : 3);
+  }
+  if (pattern == 1) { // Quad GRBG
+    return blockRow == 0 ? (blockCol == 0 ? 1 : 0) : (blockCol == 0 ? 3 : 2);
+  }
+  if (pattern == 2) { // Quad GBRG
+    return blockRow == 0 ? (blockCol == 0 ? 2 : 3) : (blockCol == 0 ? 0 : 1);
+  }
+  return blockRow == 0 ? (blockCol == 0 ? 3 : 2) : (blockCol == 0 ? 1 : 0);
+}
+
+static int gcdInt(int a, int b) {
+  a = std::abs(a);
+  b = std::abs(b);
+  while (b != 0) {
+    const int t = a % b;
+    a = b;
+    b = t;
+  }
+  return a == 0 ? 1 : a;
+}
+
+static bool computeQuadDngBlackLevels(LibRaw &rawProcessor, int cfaPattern,
+                                      int left, int top, float out[4]) {
+  if (cfaPattern < 4 || cfaPattern > 7)
+    return false;
+
+  const auto &levels = rawProcessor.imgdata.color.dng_levels;
+  const int cols = static_cast<int>(levels.dng_cblack[4]);
+  const int rows = static_cast<int>(levels.dng_cblack[5]);
+  const int repeatCount = cols * rows;
+  if (cols <= 0 || rows <= 0 || repeatCount > LIBRAW_CBLACK_SIZE - 7) {
+    const float scalarBlack =
+        levels.dng_fblack > 0.0f ? levels.dng_fblack : static_cast<float>(levels.dng_black);
+    if (scalarBlack <= 0.0f)
+      return false;
+    for (int i = 0; i < 4; ++i)
+      out[i] = scalarBlack;
+    return true;
+  }
+
+  const int periodX = (4 / gcdInt(4, cols)) * cols;
+  const int periodY = (4 / gcdInt(4, rows)) * rows;
+  double sums[4] = {0.0, 0.0, 0.0, 0.0};
+  int counts[4] = {0, 0, 0, 0};
+  bool hasRepeatValue = false;
+
+  for (int y = 0; y < periodY; ++y) {
+    for (int x = 0; x < periodX; ++x) {
+      const int channel = quadChannelIndexForPattern(cfaPattern, x, y);
+      const int blackRow = ((top + y) % rows + rows) % rows;
+      const int blackCol = ((left + x) % cols + cols) % cols;
+      const float repeatBlack = levels.dng_fcblack[6 + blackRow * cols + blackCol];
+      hasRepeatValue = hasRepeatValue || std::abs(repeatBlack) > 1e-6f;
+      sums[channel] += static_cast<double>(levels.dng_fblack + repeatBlack);
+      counts[channel] += 1;
+    }
+  }
+
+  if (!hasRepeatValue && std::abs(levels.dng_fblack) <= 1e-6f)
+    return false;
+
+  for (int i = 0; i < 4; ++i) {
+    if (counts[i] <= 0)
+      return false;
+    out[i] = static_cast<float>(sums[i] / static_cast<double>(counts[i]));
+  }
+  return true;
+}
+
+static void computeEffectiveBlackLevels(LibRaw &rawProcessor, int cfaPattern,
+                                        int left, int top, float out[4]) {
+  if (computeQuadDngBlackLevels(rawProcessor, cfaPattern, left, top, out))
+    return;
+
   const float base = static_cast<float>(rawProcessor.imgdata.color.black);
   const unsigned cols = rawProcessor.imgdata.color.cblack[4];
   const unsigned rows = rawProcessor.imgdata.color.cblack[5];
@@ -556,6 +635,7 @@ static bool applySupportedDngGainMaps(LibRaw &rawProcessor, const float blackLev
 }
 
 static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
+                                            int cfaPattern, int activeLeft, int activeTop,
                                             int &outWidth, int &outHeight,
                                             float outGrid[4]) {
   outWidth = 0;
@@ -606,18 +686,25 @@ static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
     return nullptr;
   }
 
+  const bool isQuadBayer = cfaPattern >= 4 && cfaPattern <= 7;
   std::vector<float> packed(static_cast<size_t>(mapWidth) * mapHeight * 4, 1.0f);
   for (const auto &gainMap : gainMaps) {
-    int cfa = rawProcessor.FC(gainMap.top, gainMap.left);
     int outChannel;
-    if (cfa == 0) {
-      outChannel = 0; // R
-    } else if (cfa == 1) {
-      outChannel = 1; // Gr
-    } else if (cfa == 2) {
-      outChannel = 3; // B in LibRaw CFA order, packed as A
+    if (isQuadBayer) {
+      const int relX = (static_cast<int>(gainMap.left) - activeLeft) & 1;
+      const int relY = (static_cast<int>(gainMap.top) - activeTop) & 1;
+      outChannel = relY == 0 ? (relX == 0 ? 0 : 1) : (relX == 0 ? 2 : 3);
     } else {
-      outChannel = 2; // Gb
+      int cfa = rawProcessor.FC(gainMap.top, gainMap.left);
+      if (cfa == 0) {
+        outChannel = 0; // R
+      } else if (cfa == 1) {
+        outChannel = 1; // Gr
+      } else if (cfa == 2) {
+        outChannel = 3; // B in LibRaw CFA order, packed as A
+      } else {
+        outChannel = 2; // Gb
+      }
     }
 
     for (uint32_t y = 0; y < mapHeight; ++y) {
@@ -640,8 +727,9 @@ static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
     return nullptr;
   }
   env->SetFloatArrayRegion(result, 0, static_cast<jsize>(packed.size()), packed.data());
-  LOGI("dng gain map export: %dx%d origin=(%f,%f) spacing=(%f,%f)",
-       outWidth, outHeight, outGrid[0], outGrid[1], outGrid[2], outGrid[3]);
+  LOGI("dng gain map export: %dx%d origin=(%f,%f) spacing=(%f,%f) mode=%s",
+       outWidth, outHeight, outGrid[0], outGrid[1], outGrid[2], outGrid[3],
+       isQuadBayer ? "quad-parity" : "bayer-channel");
   return result;
 }
 
@@ -1022,12 +1110,16 @@ static inline float hlgToLinear(float value) {
 static unsigned char mapCfaPatternToLibRaw(int cfaPattern) {
   switch (cfaPattern) {
   case 0:
+  case 4:
     return LIBRAW_OPENBAYER_RGGB;
   case 1:
+  case 5:
     return LIBRAW_OPENBAYER_GRBG;
   case 2:
+  case 6:
     return LIBRAW_OPENBAYER_GBRG;
   case 3:
+  case 7:
     return LIBRAW_OPENBAYER_BGGR;
   default:
     return 0;
@@ -1909,6 +2001,248 @@ static int sget4(unsigned int ord, LibRaw_abstract_datastream *stream) {
     return (s[3] << 24) | (s[2] << 16) | (s[1] << 8) | s[0];
 }
 
+struct DngCfaInfo {
+  int repeatRows = 0;
+  int repeatCols = 0;
+  std::array<unsigned char, 64> pattern{};
+  int patternLen = 0;
+  std::array<unsigned char, 4> planeColor{{0, 1, 2, 3}};
+  int planeColorLen = 0;
+};
+
+static uint16_t tiffReadU16(const unsigned char *data, bool littleEndian) {
+  if (littleEndian)
+    return static_cast<uint16_t>(data[0] | (data[1] << 8));
+  return static_cast<uint16_t>((data[0] << 8) | data[1]);
+}
+
+static uint32_t tiffReadU32(const unsigned char *data, bool littleEndian) {
+  if (littleEndian) {
+    return static_cast<uint32_t>(data[0]) |
+           (static_cast<uint32_t>(data[1]) << 8) |
+           (static_cast<uint32_t>(data[2]) << 16) |
+           (static_cast<uint32_t>(data[3]) << 24);
+  }
+  return (static_cast<uint32_t>(data[0]) << 24) |
+         (static_cast<uint32_t>(data[1]) << 16) |
+         (static_cast<uint32_t>(data[2]) << 8) |
+         static_cast<uint32_t>(data[3]);
+}
+
+static bool tiffReadAt(std::ifstream &file, uint32_t offset, unsigned char *dst,
+                       size_t size) {
+  file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+  if (!file.good())
+    return false;
+  file.read(reinterpret_cast<char *>(dst), static_cast<std::streamsize>(size));
+  return file.gcount() == static_cast<std::streamsize>(size);
+}
+
+static int tiffTypeSize(uint16_t type) {
+  switch (type) {
+  case 1:  // BYTE
+  case 2:  // ASCII
+  case 6:  // SBYTE
+  case 7:  // UNDEFINED
+    return 1;
+  case 3:  // SHORT
+  case 8:  // SSHORT
+    return 2;
+  case 4:  // LONG
+  case 9:  // SLONG
+  case 11: // FLOAT
+    return 4;
+  case 5:  // RATIONAL
+  case 10: // SRATIONAL
+  case 12: // DOUBLE
+    return 8;
+  default:
+    return 0;
+  }
+}
+
+static bool tiffEntryData(std::ifstream &file, const unsigned char entry[12],
+                          bool littleEndian, uint16_t type, uint32_t count,
+                          std::vector<unsigned char> &out) {
+  const int typeSize = tiffTypeSize(type);
+  if (typeSize <= 0 || count == 0)
+    return false;
+  const uint64_t byteCount = static_cast<uint64_t>(typeSize) * count;
+  if (byteCount > 4096)
+    return false;
+
+  out.assign(static_cast<size_t>(byteCount), 0);
+  if (byteCount <= 4) {
+    memcpy(out.data(), entry + 8, static_cast<size_t>(byteCount));
+    return true;
+  }
+
+  const uint32_t offset = tiffReadU32(entry + 8, littleEndian);
+  return tiffReadAt(file, offset, out.data(), out.size());
+}
+
+static int tiffReadValueAt(const std::vector<unsigned char> &data, uint16_t type,
+                           uint32_t index, bool littleEndian) {
+  const int typeSize = tiffTypeSize(type);
+  const size_t offset = static_cast<size_t>(index) * static_cast<size_t>(typeSize);
+  if (typeSize <= 0 || offset + static_cast<size_t>(typeSize) > data.size())
+    return 0;
+  if (type == 3 || type == 8)
+    return tiffReadU16(data.data() + offset, littleEndian);
+  if (type == 4 || type == 9)
+    return static_cast<int>(tiffReadU32(data.data() + offset, littleEndian));
+  return data[offset];
+}
+
+static void parseDngCfaIfd(std::ifstream &file, bool littleEndian,
+                           uint32_t ifdOffset, DngCfaInfo &info, int depth) {
+  if (ifdOffset == 0 || depth > 8)
+    return;
+
+  unsigned char countBytes[2];
+  if (!tiffReadAt(file, ifdOffset, countBytes, sizeof(countBytes)))
+    return;
+  const uint16_t entryCount = tiffReadU16(countBytes, littleEndian);
+  if (entryCount == 0 || entryCount > 1024)
+    return;
+
+  std::vector<uint32_t> childIfds;
+  for (uint16_t entryIndex = 0; entryIndex < entryCount; ++entryIndex) {
+    unsigned char entry[12];
+    const uint32_t entryOffset =
+        ifdOffset + 2u + static_cast<uint32_t>(entryIndex) * 12u;
+    if (!tiffReadAt(file, entryOffset, entry, sizeof(entry)))
+      return;
+
+    const uint16_t tag = tiffReadU16(entry, littleEndian);
+    const uint16_t type = tiffReadU16(entry + 2, littleEndian);
+    const uint32_t count = tiffReadU32(entry + 4, littleEndian);
+    std::vector<unsigned char> data;
+
+    if (tag == 0x828d && type == 3 && count >= 2 &&
+        tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.repeatRows = tiffReadValueAt(data, type, 0, littleEndian);
+      info.repeatCols = tiffReadValueAt(data, type, 1, littleEndian);
+    } else if (tag == 0x828e && count > 0 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.patternLen = static_cast<int>(
+          std::min<uint32_t>(count, static_cast<uint32_t>(info.pattern.size())));
+      for (int i = 0; i < info.patternLen; ++i)
+        info.pattern[i] = static_cast<unsigned char>(
+            tiffReadValueAt(data, type, static_cast<uint32_t>(i), littleEndian));
+    } else if (tag == 0xc616 && count > 0 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.planeColorLen = static_cast<int>(
+          std::min<uint32_t>(count, static_cast<uint32_t>(info.planeColor.size())));
+      for (int i = 0; i < info.planeColorLen; ++i)
+        info.planeColor[i] = static_cast<unsigned char>(
+            tiffReadValueAt(data, type, static_cast<uint32_t>(i), littleEndian));
+    } else if (tag == 0x014a &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const uint32_t childCount =
+          std::min<uint32_t>(count, static_cast<uint32_t>(data.size() / std::max(1, tiffTypeSize(type))));
+      for (uint32_t i = 0; i < childCount && i < 16; ++i) {
+        const int offset = tiffReadValueAt(data, type, i, littleEndian);
+        if (offset > 0)
+          childIfds.push_back(static_cast<uint32_t>(offset));
+      }
+    }
+  }
+
+  unsigned char nextBytes[4];
+  const uint32_t nextOffsetPos = ifdOffset + 2u + static_cast<uint32_t>(entryCount) * 12u;
+  if (tiffReadAt(file, nextOffsetPos, nextBytes, sizeof(nextBytes))) {
+    const uint32_t nextIfd = tiffReadU32(nextBytes, littleEndian);
+    if (nextIfd != 0)
+      childIfds.push_back(nextIfd);
+  }
+
+  for (uint32_t child : childIfds)
+    parseDngCfaIfd(file, littleEndian, child, info, depth + 1);
+}
+
+static bool parseDngCfaInfo(const char *path, DngCfaInfo &info) {
+  if (!path)
+    return false;
+  std::ifstream file(path, std::ios::binary);
+  if (!file)
+    return false;
+
+  unsigned char header[8];
+  if (!tiffReadAt(file, 0, header, sizeof(header)))
+    return false;
+  const bool littleEndian = header[0] == 'I' && header[1] == 'I';
+  const bool bigEndian = header[0] == 'M' && header[1] == 'M';
+  if (!littleEndian && !bigEndian)
+    return false;
+  if (tiffReadU16(header + 2, littleEndian) != 42)
+    return false;
+
+  const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
+  parseDngCfaIfd(file, littleEndian, firstIfd, info, 0);
+  return info.repeatRows > 0 && info.repeatCols > 0 && info.patternLen > 0;
+}
+
+static int dngCfaColorAt(const DngCfaInfo &info, int row, int col) {
+  if (info.repeatRows <= 0 || info.repeatCols <= 0)
+    return -1;
+  const int r = ((row % info.repeatRows) + info.repeatRows) % info.repeatRows;
+  const int c = ((col % info.repeatCols) + info.repeatCols) % info.repeatCols;
+  const int idx = r * info.repeatCols + c;
+  if (idx < 0 || idx >= info.patternLen)
+    return -1;
+  const int planeIndex = info.pattern[idx];
+  int color = planeIndex;
+  if (info.planeColorLen > 0 && planeIndex >= 0 && planeIndex < info.planeColorLen)
+    color = info.planeColor[planeIndex];
+  return color == 3 ? 1 : color;
+}
+
+static bool matchesCfa4x4(const int actual[4][4], const int expected[4][4]) {
+  for (int row = 0; row < 4; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      if (actual[row][col] != expected[row][col])
+        return false;
+    }
+  }
+  return true;
+}
+
+static int identifyQuadCfaFromDng(const DngCfaInfo &info, int left, int top,
+                                  int out4x4[4][4]) {
+  for (int row = 0; row < 4; ++row) {
+    for (int col = 0; col < 4; ++col)
+      out4x4[row][col] = dngCfaColorAt(info, top + row, left + col);
+  }
+
+  const int quadRggb[4][4] = {{0, 0, 1, 1},
+                              {0, 0, 1, 1},
+                              {1, 1, 2, 2},
+                              {1, 1, 2, 2}};
+  const int quadGrbg[4][4] = {{1, 1, 0, 0},
+                              {1, 1, 0, 0},
+                              {2, 2, 1, 1},
+                              {2, 2, 1, 1}};
+  const int quadGbrg[4][4] = {{1, 1, 2, 2},
+                              {1, 1, 2, 2},
+                              {0, 0, 1, 1},
+                              {0, 0, 1, 1}};
+  const int quadBggr[4][4] = {{2, 2, 1, 1},
+                              {2, 2, 1, 1},
+                              {1, 1, 0, 0},
+                              {1, 1, 0, 0}};
+
+  if (matchesCfa4x4(out4x4, quadRggb))
+    return 4;
+  if (matchesCfa4x4(out4x4, quadGrbg))
+    return 5;
+  if (matchesCfa4x4(out4x4, quadGbrg))
+    return 6;
+  if (matchesCfa4x4(out4x4, quadBggr))
+    return 7;
+  return -1;
+}
+
 static void exif_callback(void *datap, int tag, int type, int len,
                           unsigned int ord, void *ifp, long long offset) {
   auto *ed = static_cast<ExifData *>(datap);
@@ -2043,16 +2377,89 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
          libraw_strerror(ret));
   }*/
 
+  if (!RawProcessor.imgdata.rawdata.raw_image) {
+    LOGE("processDngNative: raw_image is null after unpack");
+    env->ReleaseStringUTFChars(filePath, path);
+    return nullptr;
+  }
+
+  int left = RawProcessor.imgdata.sizes.left_margin;
+  int top = RawProcessor.imgdata.sizes.top_margin;
+  int width = RawProcessor.imgdata.sizes.width;
+  int height = RawProcessor.imgdata.sizes.height;
+  int rawWidth = RawProcessor.imgdata.sizes.raw_width;
+
+  // 判定 CFA 模式。LibRaw COLOR()/FC() folds DNG CFAPattern into the dcraw
+  // 2-column filters representation, so Quad Bayer must be detected from the
+  // original DNG CFARepeatPatternDim/CFAPattern tags.
+  int libRawCfa4x4[4][4];
+  for (int row = 0; row < 4; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      libRawCfa4x4[row][col] = RawProcessor.COLOR(top + row, left + col);
+    }
+  }
+  int dngCfa4x4[4][4] = {{-1, -1, -1, -1},
+                         {-1, -1, -1, -1},
+                         {-1, -1, -1, -1},
+                         {-1, -1, -1, -1}};
+  int c00 = libRawCfa4x4[0][0];
+  int c01 = libRawCfa4x4[0][1];
+  int c10 = libRawCfa4x4[1][0];
+  int c11 = libRawCfa4x4[1][1];
+  jint cfaPattern = -1;
+  auto normalizedColor = [](int c) { return (c == 3) ? 1 : c; };
+  auto isG = [&](int c) { return normalizedColor(c) == 1; };
+
+  DngCfaInfo dngCfaInfo;
+  const bool hasDngCfaInfo = parseDngCfaInfo(path, dngCfaInfo);
+  if (hasDngCfaInfo) {
+    cfaPattern = identifyQuadCfaFromDng(dngCfaInfo, left, top, dngCfa4x4);
+    LOGI("processDngNative: DNG CFA tags repeat=%dx%d patternLen=%d "
+         "planeColorLen=%d active4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] quadPattern=%d",
+         dngCfaInfo.repeatRows, dngCfaInfo.repeatCols, dngCfaInfo.patternLen,
+         dngCfaInfo.planeColorLen,
+         dngCfa4x4[0][0], dngCfa4x4[0][1], dngCfa4x4[0][2], dngCfa4x4[0][3],
+         dngCfa4x4[1][0], dngCfa4x4[1][1], dngCfa4x4[1][2], dngCfa4x4[1][3],
+         dngCfa4x4[2][0], dngCfa4x4[2][1], dngCfa4x4[2][2], dngCfa4x4[2][3],
+         dngCfa4x4[3][0], dngCfa4x4[3][1], dngCfa4x4[3][2], dngCfa4x4[3][3],
+         cfaPattern);
+  }
+
+  if (cfaPattern == -1) {
+    if (c00 == 0 && isG(c01) && isG(c10) && c11 == 2) {
+      cfaPattern = 0; // RGGB
+    } else if (isG(c00) && c01 == 0 && c10 == 2 && isG(c11)) {
+      cfaPattern = 1; // GRBG
+    } else if (isG(c00) && c01 == 2 && c10 == 0 && isG(c11)) {
+      cfaPattern = 2; // GBRG
+    } else if (c00 == 2 && isG(c01) && isG(c10) && c11 == 0) {
+      cfaPattern = 3; // BGGR
+    }
+  }
+  if (cfaPattern == -1) {
+    LOGW("processDngNative: Unknown CFA matrix (%d,%d,%d,%d), fallback to RGGB(0) to avoid GPU out-of-bounds crash", c00, c01, c10, c11);
+    cfaPattern = 0;
+  }
+  LOGI("processDngNative: CFA pattern identified from pixel [%d,%d] "
+       "libraw2x2=(%d,%d,%d,%d) libraw4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] -> %d",
+       top, left, c00, c01, c10, c11,
+       libRawCfa4x4[0][0], libRawCfa4x4[0][1], libRawCfa4x4[0][2], libRawCfa4x4[0][3],
+       libRawCfa4x4[1][0], libRawCfa4x4[1][1], libRawCfa4x4[1][2], libRawCfa4x4[1][3],
+       libRawCfa4x4[2][0], libRawCfa4x4[2][1], libRawCfa4x4[2][2], libRawCfa4x4[2][3],
+       libRawCfa4x4[3][0], libRawCfa4x4[3][1], libRawCfa4x4[3][2], libRawCfa4x4[3][3],
+       cfaPattern);
+
   // Read the TOTAL effective black level per channel.
   // LibRaw stores it as: color.black + cblack[channel] + repeat_pattern[position].
   float dngBlackLevels[4] = {};
-  computeEffectiveBlackLevels(RawProcessor, dngBlackLevels);
+  computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, dngBlackLevels);
   LOGI("dng black levels (metadata): %f %f %f %f", dngBlackLevels[0], dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]);
   int exportedLscWidth = 0;
   int exportedLscHeight = 0;
   float exportedLscGrid[4] = {0.0f, 0.0f, 1.0f, 1.0f};
   jfloatArray exportedLscArray = buildDngLensShadingArray(
-      env, RawProcessor, exportedLscWidth, exportedLscHeight, exportedLscGrid);
+      env, RawProcessor, cfaPattern, left, top, exportedLscWidth,
+      exportedLscHeight, exportedLscGrid);
   jfloatArray exportedLscGridArray = nullptr;
   if (exportedLscArray) {
     exportedLscGridArray = env->NewFloatArray(4);
@@ -2101,18 +2508,6 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   } else {
     LOGI("raw awb estimate: disabled, using camera wb");
   }
-
-  if (!RawProcessor.imgdata.rawdata.raw_image) {
-    LOGE("processDngNative: raw_image is null after unpack");
-    env->ReleaseStringUTFChars(filePath, path);
-    return nullptr;
-  }
-
-  int left = RawProcessor.imgdata.sizes.left_margin;
-  int top = RawProcessor.imgdata.sizes.top_margin;
-  int width = RawProcessor.imgdata.sizes.width;
-  int height = RawProcessor.imgdata.sizes.height;
-  int rawWidth = RawProcessor.imgdata.sizes.raw_width;
 
   // 准备返回结果：仅拷贝有效 Bayer 像素区域的单通道数据，以极大地减少 JNI 开销
   size_t outputSize = (size_t)width * height * 2; // 16-bit single channel
@@ -2409,28 +2804,6 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       (jfloat)RawProcessor.imgdata.color.dng_levels.dng_whitelevel[0];
   if (whiteLevel <= 0)
     whiteLevel = (jfloat)RawProcessor.imgdata.color.maximum;
-
-  // 判定 CFA 模式
-  int c00 = RawProcessor.COLOR(top, left);
-  int c01 = RawProcessor.COLOR(top, left + 1);
-  int c10 = RawProcessor.COLOR(top + 1, left);
-  int c11 = RawProcessor.COLOR(top + 1, left + 1);
-  jint cfaPattern = -1;
-  auto isG = [](int c) { return c == 1 || c == 3; };
-  if (c00 == 0 && isG(c01) && isG(c10) && c11 == 2) {
-    cfaPattern = 0; // RGGB
-  } else if (isG(c00) && c01 == 0 && c10 == 2 && isG(c11)) {
-    cfaPattern = 1; // GRBG
-  } else if (isG(c00) && c01 == 2 && c10 == 0 && isG(c11)) {
-    cfaPattern = 2; // GBRG
-  } else if (c00 == 2 && isG(c01) && isG(c10) && c11 == 0) {
-    cfaPattern = 3; // BGGR
-  }
-  if (cfaPattern == -1) {
-    LOGW("processDngNative: Unknown CFA matrix (%d,%d,%d,%d), fallback to RGGB(0) to avoid GPU out-of-bounds crash", c00, c01, c10, c11);
-    cfaPattern = 0;
-  }
-  LOGI("processDngNative: CFA pattern identified from pixel [%d,%d] color matrix: (%d,%d,%d,%d) -> %d", top, left, c00, c01, c10, c11, cfaPattern);
 
   jfloat baselineExposure =
       RawProcessor.imgdata.color.dng_levels.baseline_exposure;

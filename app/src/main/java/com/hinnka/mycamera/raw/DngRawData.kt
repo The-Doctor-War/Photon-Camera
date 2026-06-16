@@ -34,7 +34,7 @@ data class DngRawData @Keep constructor(
     val preMul: FloatArray,
     val whiteBalance: FloatArray,
     val colorMatrix: FloatArray,
-    val cfaPattern: Int, // 0=RGGB, 1=GRBG, 2=GBRG, 3=BGGR
+    val cfaPattern: Int, // 0..3=Bayer RGGB/GRBG/GBRG/BGGR, 4..7=Quad Bayer variants
     val rotation: Int,
     val baselineExposure: Float,
     val lensShadingMap: FloatArray?,
