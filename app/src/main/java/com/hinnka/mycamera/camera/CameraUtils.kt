@@ -5,7 +5,6 @@ import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
-import android.util.Log
 import android.util.Size
 import com.hinnka.mycamera.utils.PLog
 import kotlin.math.abs
@@ -14,6 +13,9 @@ import kotlin.math.abs
  * 相机工具类
  */
 object CameraUtils {
+
+    private const val ASPECT_RATIO_TOLERANCE = 0.01f
+    private const val PREVIEW_TARGET_SHORT_EDGE = 1080
 
     /**
      * 获取固定的预览尺寸
@@ -31,50 +33,13 @@ object CameraUtils {
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 ?: return Size(1440, 1080)
 
-            // 首先获取最大的拍照尺寸，以此作为传感器的原生比例
-            val sensorRatio = aspectRatio.getValue(true)
-
             val previewSizes = map.getOutputSizes(SurfaceTexture::class.java)?.toList() ?: emptyList()
-
-            // 寻找比例最匹配传感器原生比例且高度不超过 1080 的预览尺寸
-            val matchingSizes = previewSizes.filter {
-                val ratio = it.width.toFloat() / it.height
-                abs(ratio - sensorRatio) < 0.01
+            if (previewSizes.isEmpty()) {
+                return Size(1440, 1080)
             }
 
-            // 优先选择匹配比例中，高度最接近 1080 的尺寸
-            val bestMatching = matchingSizes.filter { it.height <= 1080 }.maxByOrNull { it.width * it.height }
-                ?: matchingSizes.minByOrNull { it.width * it.height }
-
-            if (bestMatching != null) return bestMatching
-
-            // 没有精确匹配的比例时（如 XPAN 65:24），需要选择一个能覆盖目标比例的预览尺寸。
-            // 关键：必须与 getBestCaptureSize 使用相同的选择策略（选择最宽的尺寸），
-            // 否则预览和拍摄从不同基础比例裁切到目标比例时，FOV 会不一致。
-            // 
-            // 例如 XPAN (2.708:1)：如果预览选了 1:1 (1080x1080)，拍照选了 4:3 (4096x3072)，
-            // 两者裁切到 65:24 时，4:3 的水平 FOV 更大，导致拍到的画面比预览多。
-            //
-            // 策略：找到 getBestCaptureSize 会选择的比例，然后选择该比例的预览尺寸
-            val captureSizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)?.toList() ?: emptyList()
-            val bestCaptureSize = captureSizes.maxByOrNull { it.width * it.height }
-            
-            if (bestCaptureSize != null) {
-                val captureRatio = bestCaptureSize.width.toFloat() / bestCaptureSize.height
-                val captureMatchingSizes = previewSizes.filter {
-                    val ratio = it.width.toFloat() / it.height
-                    abs(ratio - captureRatio) < 0.01
-                }
-                val bestCaptureMatching = captureMatchingSizes
-                    .filter { it.height <= 1080 }
-                    .maxByOrNull { it.width * it.height }
-                    ?: captureMatchingSizes.minByOrNull { it.width * it.height }
-                
-                if (bestCaptureMatching != null) return bestCaptureMatching
-            }
-
-            // 最终回退：选择高度 >= 1080 中最小的一个
-            return previewSizes.filter { it.height >= 1080 }.minByOrNull { it.width } ?: Size(1440, 1080)
+            val targetRatio = aspectRatio.getValue(true)
+            return chooseBestPreviewSize(previewSizes, targetRatio) ?: Size(1440, 1080)
         } catch (e: Exception) {
             PLog.d("CameraUtils", "getFixedPreviewSize: ${e.message}")
             return Size(1440, 1080)
@@ -90,24 +55,138 @@ object CameraUtils {
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = map?.getOutputSizes(ImageFormat.YUV_420_888) ?: arrayOf(Size(1920, 1080))
-            val sensorRatio = aspectRatio.getValue(true)
+            val targetRatio = aspectRatio.getValue(true)
 
-            // 寻找比例最匹配传感器原生比例
-            val matchingSizes = sizes.filter {
-                val ratio = it.width.toFloat() / it.height
-                abs(ratio - sensorRatio) < 0.01
-            }
-
-            val bestMatching = matchingSizes.filter { it.height >= 2160 }.maxByOrNull { it.width * it.height }
-
-            if (bestMatching != null) return bestMatching
-
-            // 选择最大的尺寸
-            sizes.maxByOrNull { it.width * it.height } ?: Size(1920, 1080)
+            chooseBestCaptureSize(sizes.toList(), targetRatio) ?: Size(1920, 1080)
         } catch (e: Exception) {
 //            PLog.e(TAG, "Failed to get capture size", e)
             Size(1920, 1080)
         }
+    }
+
+    private fun chooseBestCaptureSize(sizes: List<Size>, targetRatio: Float): Size? {
+        if (sizes.isEmpty()) return null
+
+        val aspectMatchedSize = sizes
+            .filter { it.matchesAspectRatio(targetRatio) }
+            .maxByOrNull { it.pixelCount() }
+        val maxSize = sizes.maxByOrNull { it.pixelCount() } ?: return aspectMatchedSize
+
+        val selected = chooseHigherEffectiveCropSize(
+            aspectMatchedSize = aspectMatchedSize,
+            cropSourceSize = maxSize,
+            targetRatio = targetRatio
+        )
+
+        logSizeChoice(
+            label = "Capture",
+            targetRatio = targetRatio,
+            aspectMatchedSize = aspectMatchedSize,
+            cropSourceSize = maxSize,
+            selected = selected
+        )
+        return selected
+    }
+
+    private fun chooseBestPreviewSize(sizes: List<Size>, targetRatio: Float): Size? {
+        if (sizes.isEmpty()) return null
+
+        val aspectMatchedSize = sizes
+            .filter { it.matchesAspectRatio(targetRatio) }
+            .let { matchingSizes ->
+                matchingSizes
+                    .filter { it.shortEdge() <= PREVIEW_TARGET_SHORT_EDGE }
+                    .maxByOrNull { it.pixelCount() }
+                    ?: matchingSizes.minByOrNull { it.pixelCount() }
+            }
+        val preview1080SourceSize = sizes
+            .filter { it.shortEdge() <= PREVIEW_TARGET_SHORT_EDGE }
+            .maxByOrNull { it.pixelCount() }
+            ?: sizes.minByOrNull { it.pixelCount() }
+
+        val selected = chooseHigherEffectiveCropSize(
+            aspectMatchedSize = aspectMatchedSize,
+            cropSourceSize = preview1080SourceSize,
+            targetRatio = targetRatio
+        )
+
+        logSizeChoice(
+            label = "Preview",
+            targetRatio = targetRatio,
+            aspectMatchedSize = aspectMatchedSize,
+            cropSourceSize = preview1080SourceSize,
+            selected = selected
+        )
+        return selected
+    }
+
+    private fun chooseHigherEffectiveCropSize(
+        aspectMatchedSize: Size?,
+        cropSourceSize: Size?,
+        targetRatio: Float
+    ): Size? {
+        if (cropSourceSize == null) return aspectMatchedSize
+        if (aspectMatchedSize == null) return cropSourceSize
+
+        val aspectMatchedPixels = aspectMatchedSize.croppedPixelCount(targetRatio)
+        val cropSourcePixels = cropSourceSize.croppedPixelCount(targetRatio)
+        return if (cropSourcePixels > aspectMatchedPixels) {
+            cropSourceSize
+        } else {
+            aspectMatchedSize
+        }
+    }
+
+    private fun Size.matchesAspectRatio(targetRatio: Float): Boolean {
+        return height > 0 && abs(width.toFloat() / height.toFloat() - targetRatio) < ASPECT_RATIO_TOLERANCE
+    }
+
+    private fun Size.pixelCount(): Long {
+        return width.toLong() * height.toLong()
+    }
+
+    private fun Size.shortEdge(): Int {
+        return minOf(width, height)
+    }
+
+    private fun Size.croppedPixelCount(targetRatio: Float): Long {
+        val cropSize = cropToAspectRatio(targetRatio)
+        return cropSize.width.toLong() * cropSize.height.toLong()
+    }
+
+    private fun Size.cropToAspectRatio(targetRatio: Float): Size {
+        if (width <= 0 || height <= 0 || targetRatio <= 0f) return this
+
+        val sourceRatio = width.toFloat() / height.toFloat()
+        return if (sourceRatio > targetRatio) {
+            Size((height * targetRatio).toInt().coerceIn(1, width), height)
+        } else {
+            Size(width, (width / targetRatio).toInt().coerceIn(1, height))
+        }
+    }
+
+    private fun logSizeChoice(
+        label: String,
+        targetRatio: Float,
+        aspectMatchedSize: Size?,
+        cropSourceSize: Size?,
+        selected: Size?
+    ) {
+        val selectedCrop = selected?.cropToAspectRatio(targetRatio)
+        PLog.d(
+            "CameraUtils",
+            "$label size: targetRatio=${"%.3f".format(targetRatio)}, " +
+                    "matched=${aspectMatchedSize?.toLogString() ?: "none"} " +
+                    "(${aspectMatchedSize?.cropToAspectRatio(targetRatio)?.toLogString() ?: "none"} effective), " +
+                    "cropSource=${cropSourceSize?.toLogString() ?: "none"} " +
+                    "(${cropSourceSize?.cropToAspectRatio(targetRatio)?.toLogString() ?: "none"} effective), " +
+                    "selected=${selected?.toLogString() ?: "none"} " +
+                    "(${selectedCrop?.toLogString() ?: "none"} effective)"
+        )
+    }
+
+    private fun Size.toLogString(): String {
+        return "${width}x${height}"
     }
     
     /**
