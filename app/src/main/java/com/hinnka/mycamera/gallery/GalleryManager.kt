@@ -22,7 +22,6 @@ import com.hinnka.mycamera.gallery.db.GalleryMediaStore
 import com.hinnka.mycamera.hdr.GainmapResult
 import com.hinnka.mycamera.hdr.GainmapSourceSet
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
-import com.hinnka.mycamera.hdr.MertensExposureFusionProcessor
 import com.hinnka.mycamera.hdr.SourceKind
 import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
@@ -31,6 +30,8 @@ import com.hinnka.mycamera.lut.applyEffectsToVideoFile
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
+import com.hinnka.mycamera.processor.YuvHdrStackFrame
+import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.SpectralFilmTuning
@@ -91,21 +92,25 @@ object GalleryManager {
     private const val DETAIL_HDR_FILE = "detail_hdr.jpg"
     private const val MULTIPLE_EXPOSURE_DIR = "multiple_exposure_sessions"
     private const val MULTIPLE_EXPOSURE_PREVIEW_FILE = "preview.jpg"
+    private const val HDR_BRACKET_FRAME_COUNT = 3
     private const val HDR_BRACKET_ZERO_INDEX = 0
     private const val HDR_BRACKET_HIGH_INDEX = 1
     private const val HDR_BRACKET_LOW_INDEX = 2
-
-    private data class HdrBracketFrameSet<T>(
-        val zeroEvFrames: List<T>,
-        val highFrame: T,
-        val lowFrame: T
-    )
+    private const val HDR_ROLE_MEASURED_PRODUCT_MIN_SPREAD = 1.10f
 
     private data class RawHdrStackCandidate(
         val image: SafeImage,
         val captureResult: CaptureResult,
         val exposureProduct: Double,
         val index: Int,
+    )
+
+    private data class YuvHdrFrameSelection(
+        val indexedProducts: Map<Int, Float>,
+        val zeroIndices: Set<Int>,
+        val highIndex: Int,
+        val lowIndex: Int,
+        val fusionExposureProducts: FloatArray,
     )
 
     data class VideoRecordInfo(
@@ -1858,34 +1863,6 @@ object GalleryManager {
         composeAverageBitmap(getMultipleExposureFrameFiles(context, sessionId), null)
     }
 
-    private fun <T> splitHdrBracketFrames(frames: List<T>, zeroEvFrameCount: Int): HdrBracketFrameSet<T> {
-        val zeroFrameEnd = (HDR_BRACKET_LOW_INDEX + zeroEvFrameCount.coerceAtLeast(1))
-            .coerceAtMost(frames.size)
-        val zeroEvFrames = buildList {
-            add(frames[HDR_BRACKET_ZERO_INDEX])
-            if (zeroFrameEnd > HDR_BRACKET_LOW_INDEX + 1) {
-                addAll(frames.subList(HDR_BRACKET_LOW_INDEX + 1, zeroFrameEnd))
-            }
-        }
-        return HdrBracketFrameSet(
-            zeroEvFrames = zeroEvFrames,
-            highFrame = frames[HDR_BRACKET_HIGH_INDEX],
-            lowFrame = frames[HDR_BRACKET_LOW_INDEX]
-        )
-    }
-
-    private fun hdrBracketZeroFrameIndices(zeroEvFrameCount: Int, frameCount: Int): List<Int> {
-        if (frameCount <= 0) return emptyList()
-        val zeroFrameEnd = (HDR_BRACKET_LOW_INDEX + zeroEvFrameCount.coerceAtLeast(1))
-            .coerceAtMost(frameCount)
-        return buildList {
-            add(HDR_BRACKET_ZERO_INDEX)
-            for (index in (HDR_BRACKET_LOW_INDEX + 1) until zeroFrameEnd) {
-                add(index)
-            }
-        }
-    }
-
     private fun buildRawHdrStackCandidates(
         images: List<SafeImage>,
         captureResults: List<CaptureResult?>,
@@ -1939,143 +1916,102 @@ object GalleryManager {
             return@withContext null
         }
 
-        val bitmaps = ArrayList<Bitmap>(3)
         try {
             if (useSuperResolution) {
                 PLog.w(TAG, "HDR bracket Mertens fusion uses 0EV stacking without super resolution")
             }
             if (!useGpuAcceleration) {
-                PLog.w(TAG, "HDR bracket 0EV denoise uses GLES stacker; ignoring disabled GPU acceleration setting")
+                PLog.w(TAG, "HDR bracket YUV alignment/denoise uses GLES stacker; ignoring disabled GPU acceleration setting")
             }
-            val frameSet = splitHdrBracketFrames(images, zeroEvFrameCount)
-            val zeroEvBitmap = processHdrBracketZeroEvFrames(
-                images = frameSet.zeroEvFrames,
+            val frameSelection = buildYuvHdrFrameSelection(
+                captureResults = captureResults,
+                frameCount = images.size,
+            )
+            val hdrStackResult = processHdrBracketYuvFrames(
+                images = images,
+                frameSelection = frameSelection,
                 rotation = rotation,
                 aspectRatio = aspectRatio,
                 shouldMirror = shouldMirror,
-                useSuperResolution = false,
-                colorSpace = colorSpace
+                useGpuAcceleration = useGpuAcceleration,
+                colorSpace = colorSpace,
             )
-            val targetWidth = zeroEvBitmap.width
-            val targetHeight = zeroEvBitmap.height
-            bitmaps.add(zeroEvBitmap)
-            bitmaps.add(
-                scaleHdrSideFrameIfNeeded(
-                    processHdrBracketSideFrame(frameSet.highFrame, rotation, aspectRatio, shouldMirror),
-                    targetWidth,
-                    targetHeight
-                )
-            )
-            bitmaps.add(
-                scaleHdrSideFrameIfNeeded(
-                    processHdrBracketSideFrame(frameSet.lowFrame, rotation, aspectRatio, shouldMirror),
-                    targetWidth,
-                    targetHeight
-                )
-            )
-            val exposureProducts = buildHdrMertensExposureProducts(
-                captureResults = captureResults,
-                zeroEvFrameCount = zeroEvFrameCount,
-                frameCount = images.size,
-            )
-            PLog.d(
-                TAG,
-                "Composing HDR with Mertens fusion and validity-aware deghost mask, exposureScales=${formatRelativeExposureScales(exposureProducts)}"
-            )
-            MertensExposureFusionProcessor.fuse(
-                frames = bitmaps,
-                exposureProducts = exposureProducts,
-                enableDeghostMask = true,
-            )
+            hdrStackResult
         } catch (e: Exception) {
             images.forEach { it.close() }
             PLog.e(TAG, "Failed to compose HDR bracket photo", e)
             null
-        } finally {
-            bitmaps.forEach {
-                if (!it.isRecycled) {
-                    it.recycle()
-                }
+        }
+    }
+
+    private fun buildYuvHdrFrameSelection(
+        captureResults: List<CaptureResult?>,
+        frameCount: Int,
+    ): YuvHdrFrameSelection {
+        val measuredProducts = (0 until frameCount).associateWith { index ->
+            captureExposureProduct(captureResults.getOrNull(index))
+        }
+        val measuredValues = measuredProducts.values
+            .filterNotNull()
+            .filter { it.isFinite() && it > 0f }
+        val measuredSpread = if (measuredValues.size >= HDR_BRACKET_FRAME_COUNT) {
+            val minProduct = measuredValues.minOrNull() ?: 1f
+            val maxProduct = measuredValues.maxOrNull() ?: 1f
+            maxProduct / minProduct.coerceAtLeast(1e-6f)
+        } else {
+            1f
+        }
+        val useMeasuredProductsForRoles = measuredSpread > HDR_ROLE_MEASURED_PRODUCT_MIN_SPREAD
+        val indexedProducts = (0 until frameCount).associateWith { index ->
+            measuredProducts[index]
+                ?.takeIf { it.isFinite() && it > 0f }
+                ?: fallbackHdrExposureProduct(index)
+        }
+        val roleProducts = (0 until frameCount).associateWith { index ->
+            if (useMeasuredProductsForRoles) {
+                indexedProducts[index] ?: fallbackHdrExposureProduct(index)
+            } else {
+                fallbackHdrExposureProduct(index)
             }
         }
-    }
-
-    private fun processHdrBracketSideFrame(
-        image: SafeImage,
-        rotation: Int,
-        aspectRatio: AspectRatio,
-        shouldMirror: Boolean
-    ): Bitmap {
-        val processed = image.use {
-            YuvProcessor.processAndToBitmap(it.image, aspectRatio, rotation)
-        }
-        return mirrorBitmapIfNeeded(processed, shouldMirror)
-    }
-
-    private fun processHdrBracketZeroEvFrames(
-        images: List<SafeImage>,
-        rotation: Int,
-        aspectRatio: AspectRatio,
-        shouldMirror: Boolean,
-        useSuperResolution: Boolean,
-        colorSpace: ColorSpace
-    ): Bitmap {
-        if (images.size == 1 && !useSuperResolution) {
-            return processHdrBracketSideFrame(images.first(), rotation, aspectRatio, shouldMirror)
-        }
-
-        val stacked = try {
-            MultiFrameStacker.processBurst(
-                images = images,
-                rotation = rotation,
-                aspectRatio = aspectRatio,
-                outputPath = null,
-                enableSuperResolution = useSuperResolution,
-                useGpuAcceleration = true,
-                colorSpace = colorSpace
-            )
-        } finally {
-            images.forEach { it.close() }
-        } ?: throw IllegalStateException("Failed to stack HDR bracket 0EV frames")
-        return mirrorBitmapIfNeeded(stacked, shouldMirror)
-    }
-
-    private fun scaleHdrSideFrameIfNeeded(bitmap: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
-        if (bitmap.width == targetWidth && bitmap.height == targetHeight) return bitmap
-        val scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-        bitmap.recycle()
-        return scaled
-    }
-
-    private fun buildHdrMertensExposureProducts(
-        captureResults: List<CaptureResult?>,
-        zeroEvFrameCount: Int,
-        frameCount: Int,
-    ): FloatArray {
-        val zeroIndices = hdrBracketZeroFrameIndices(zeroEvFrameCount, frameCount)
-        val measuredZeroProduct = zeroIndices
-            .mapNotNull { captureExposureProduct(captureResults.getOrNull(it)) }
+        val orderedForRoles = roleProducts.entries.sortedWith(
+            compareBy<Map.Entry<Int, Float>> { it.value }.thenBy { it.key }
+        )
+        val lowIndex = orderedForRoles.firstOrNull()?.key ?: HDR_BRACKET_LOW_INDEX.coerceAtMost(frameCount - 1)
+        val highIndex = orderedForRoles
+            .asReversed()
+            .firstOrNull { it.key != lowIndex }
+            ?.key
+            ?: HDR_BRACKET_HIGH_INDEX.coerceAtMost(frameCount - 1)
+        val sideIndices = setOf(highIndex, lowIndex)
+        val zeroIndices = (0 until frameCount)
+            .filter { it !in sideIndices }
+            .toSet()
+            .ifEmpty { setOf(HDR_BRACKET_ZERO_INDEX.coerceAtMost(frameCount - 1)) }
+        val zeroProduct = zeroIndices
+            .mapNotNull { indexedProducts[it] }
             .takeIf { it.isNotEmpty() }
             ?.average()
             ?.toFloat()
             ?.takeIf { it.isFinite() && it > 0f }
-        val zeroProduct = measuredZeroProduct ?: 1f
-        val highProduct = captureExposureProduct(captureResults.getOrNull(HDR_BRACKET_HIGH_INDEX))
-        val lowProduct = captureExposureProduct(captureResults.getOrNull(HDR_BRACKET_LOW_INDEX))
-        return floatArrayOf(
-            zeroProduct,
-            highProduct ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_HIGH_INDEX),
-            lowProduct ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_LOW_INDEX),
-        )
-    }
-
-    private fun formatRelativeExposureScales(exposureProducts: FloatArray): String {
-        val reference = exposureProducts.getOrNull(HDR_BRACKET_ZERO_INDEX)
-            ?.takeIf { it.isFinite() && it > 0f }
             ?: 1f
-        return exposureProducts.joinToString(prefix = "[", postfix = "]") { product ->
-            "%.2f".format((product / reference).coerceAtLeast(0f))
-        }
+        val fusionExposureProducts = floatArrayOf(
+            zeroProduct,
+            indexedProducts[highIndex]
+                ?.takeIf { it.isFinite() && it > 0f }
+                ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_HIGH_INDEX),
+            indexedProducts[lowIndex]
+                ?.takeIf { it.isFinite() && it > 0f }
+                ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_LOW_INDEX),
+        )
+
+        return YuvHdrFrameSelection(
+            indexedProducts = indexedProducts,
+            zeroIndices = zeroIndices,
+            highIndex = highIndex,
+            lowIndex = lowIndex,
+            fusionExposureProducts = fusionExposureProducts,
+        )
     }
 
     private fun captureExposureProduct(result: CaptureResult?): Float? {
@@ -2095,6 +2031,49 @@ object GalleryManager {
             index == HDR_BRACKET_HIGH_INDEX -> Math.pow(2.0, sideEv).toFloat()
             index == HDR_BRACKET_LOW_INDEX -> Math.pow(2.0, -sideEv).toFloat()
             else -> 1f
+        }
+    }
+
+    private fun processHdrBracketYuvFrames(
+        images: List<SafeImage>,
+        frameSelection: YuvHdrFrameSelection,
+        rotation: Int,
+        aspectRatio: AspectRatio,
+        shouldMirror: Boolean,
+        useGpuAcceleration: Boolean,
+        colorSpace: ColorSpace,
+    ): Bitmap {
+        val stackResult = MultiFrameStacker.processHdrBurstYuv(
+            frames = buildYuvHdrStackFrames(
+                images = images,
+                frameSelection = frameSelection,
+            ),
+            fusionExposureProducts = frameSelection.fusionExposureProducts,
+            rotation = rotation,
+            aspectRatio = aspectRatio,
+            useGpuAcceleration = useGpuAcceleration,
+            colorSpace = colorSpace,
+        ) ?: throw IllegalStateException("Failed to stack and compose aligned HDR YUV frames")
+
+        return mirrorBitmapIfNeeded(stackResult, shouldMirror)
+    }
+
+    private fun buildYuvHdrStackFrames(
+        images: List<SafeImage>,
+        frameSelection: YuvHdrFrameSelection,
+    ): List<YuvHdrStackFrame> {
+        return images.mapIndexed { index, image ->
+            val role = when {
+                index == frameSelection.highIndex -> YuvHdrStackFrameRole.HIGH_EV
+                index == frameSelection.lowIndex -> YuvHdrStackFrameRole.LOW_EV
+                index in frameSelection.zeroIndices -> YuvHdrStackFrameRole.ZERO_EV
+                else -> YuvHdrStackFrameRole.ZERO_EV
+            }
+            YuvHdrStackFrame(
+                image = image,
+                exposureProduct = frameSelection.indexedProducts[index] ?: 1f,
+                role = role,
+            )
         }
     }
 

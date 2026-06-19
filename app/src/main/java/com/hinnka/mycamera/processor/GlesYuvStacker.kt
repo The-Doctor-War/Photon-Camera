@@ -16,7 +16,9 @@ import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
 
 class GlesYuvStacker(
     private val width: Int,
@@ -27,7 +29,67 @@ class GlesYuvStacker(
     private val colorSpace: ColorSpace,
     private val inputFormat: Int,
 ) {
+    data class HdrInputFrame(
+        val image: SafeImage,
+        val exposureProduct: Float,
+        val role: HdrFrameRole,
+    )
+
+    enum class HdrFrameRole {
+        ZERO_EV,
+        HIGH_EV,
+        LOW_EV,
+    }
+
     private data class TextureLevel(val texture: Int, val width: Int, val height: Int)
+
+    private interface MertensFramebufferSource {
+        val width: Int
+        val height: Int
+        val textureId: Int
+    }
+
+    private data class MertensRenderTarget(
+        override val width: Int,
+        override val height: Int,
+        override val textureId: Int,
+        val framebufferId: Int,
+        val ownsTexture: Boolean = true,
+        val ownsFramebuffer: Boolean = true,
+    ) : MertensFramebufferSource {
+        private var released = false
+
+        fun release() {
+            if (released) return
+            if (ownsTexture) {
+                GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
+            }
+            if (ownsFramebuffer) {
+                GLES30.glDeleteFramebuffers(1, intArrayOf(framebufferId), 0)
+            }
+            released = true
+        }
+    }
+
+    private data class MertensTextureOnlyTarget(
+        override val width: Int,
+        override val height: Int,
+        override val textureId: Int,
+    ) : MertensFramebufferSource
+
+    private data class MertensTextureLevel(
+        override val width: Int,
+        override val height: Int,
+        override val textureId: Int,
+        val owned: Boolean,
+        val owner: MertensRenderTarget? = null,
+    ) : MertensFramebufferSource {
+        fun releaseIfOwned() {
+            if (owned) {
+                owner?.release() ?: GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
+            }
+        }
+    }
 
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
@@ -45,6 +107,14 @@ class GlesYuvStacker(
     private var tileMaskProgram = 0
     private var accumulateProgram = 0
     private var normalizeProgram = 0
+    private var alignedFrameOutputProgram = 0
+    private var mertensWeightProgram = 0
+    private var mertensNormalizeProgram = 0
+    private var mertensPyrDownProgram = 0
+    private var mertensLaplacianProgram = 0
+    private var mertensCombineProgram = 0
+    private var mertensReconstructProgram = 0
+    private var mertensCopyProgram = 0
     private var p010LumaProgram = 0
     private var p010ChromaProgram = 0
     private var planarChroma8Program = 0
@@ -75,6 +145,9 @@ class GlesYuvStacker(
     private var accumulatorTexture = 0
     private var accumulatorScratchTexture = 0
     private var currentAccumulatorTexture = 0
+    private var hdrZeroTexture = 0
+    private var hdrHighTexture = 0
+    private var hdrLowTexture = 0
     private var outputTexture = 0
 
     private var gridWidth = 0
@@ -82,9 +155,8 @@ class GlesYuvStacker(
     private val renderOutputWidth = outputWidth
     private val renderOutputHeight = outputHeight
     private val normalizedRotation = normalizeRotation(rotation)
-    private val cpuRotateReadback = normalizedRotation == 90 || normalizedRotation == 270
-    private val gpuOutputWidth = if (cpuRotateReadback) renderOutputHeight else renderOutputWidth
-    private val gpuOutputHeight = if (cpuRotateReadback) renderOutputWidth else renderOutputHeight
+    private val gpuOutputWidth = renderOutputWidth
+    private val gpuOutputHeight = renderOutputHeight
     private val highPrecisionInput = inputFormat == ImageFormat.YCBCR_P010
     private val lumaInternalFormat = if (highPrecisionInput) GLES30.GL_R16F else GLES30.GL_R8
     private val chromaInternalFormat = if (highPrecisionInput) GLES30.GL_RG16F else GLES30.GL_RG8
@@ -159,6 +231,154 @@ class GlesYuvStacker(
             release()
             GlesGpuScheduler.restoreCurrentThreadPriority(originalThreadPriority, TAG)
         }
+    }
+
+    fun processHdr(
+        frames: List<HdrInputFrame>,
+        exposureProducts: FloatArray?,
+    ): Bitmap? {
+        if (!validateHdrInputFrames(frames)) {
+            return null
+        }
+
+        val originalThreadPriority = GlesGpuScheduler.lowerCurrentThreadPriority(TAG)
+        try {
+            initEgl()
+            ensureGles31()
+            initPrograms()
+            initHdrPrograms()
+            initResources()
+            ensureHdrFusionTextures()
+
+            val referenceIndex = frames.indexOfFirst { it.role == HdrFrameRole.ZERO_EV }
+            val referenceFrame = frames[referenceIndex]
+            val referenceExposureProduct = validExposureProduct(referenceFrame.exposureProduct)
+            var hasHighFrame = false
+            var hasLowFrame = false
+
+            if (!uploadImagePlanes(referenceFrame.image, refY, refCbCr, refYStaging, refCbCrStaging, "HDR reference")) {
+                return null
+            }
+
+            val refPyramid = createPyramid(refY)
+            val curPyramid = createPyramid(curY)
+            buildPyramid(refPyramid)
+            computeStructureTensor(refY)
+            clearAccumulator()
+            accumulateFrame(refY, refCbCr, isReference = true)
+            GlesGpuScheduler.yieldToUiRenderer()
+
+            for ((index, frame) in frames.withIndex()) {
+                if (index == referenceIndex) {
+                    continue
+                }
+                if (!uploadImagePlanes(frame.image, curY, curCbCr, curYStaging, curCbCrStaging, "HDR frame $index")) {
+                    PLog.w(TAG, "Failed to upload HDR frame $index YUV planes")
+                    return null
+                }
+                val currentToReferenceScale = currentToReferenceExposureScale(
+                    referenceExposureProduct = referenceExposureProduct,
+                    currentExposureProduct = frame.exposureProduct,
+                )
+
+                when (frame.role) {
+                    HdrFrameRole.ZERO_EV -> {
+                        buildPyramid(curPyramid)
+                        alignCurrentToReference(refPyramid, curPyramid, currentToReferenceScale)
+                        smoothFlow()
+                        computeRobustness(currentToReferenceScale)
+                        computeTileMask()
+                        accumulateFrame(curY, curCbCr, isReference = false)
+                    }
+                    HdrFrameRole.HIGH_EV -> {
+                        renderHdrSideFrameToTexture(
+                            yTexture = curY,
+                            cbCrTexture = curCbCr,
+                            targetTexture = hdrHighTexture,
+                            label = "renderHdrHighTexture",
+                        )
+                        hasHighFrame = true
+                    }
+                    HdrFrameRole.LOW_EV -> {
+                        renderHdrSideFrameToTexture(
+                            yTexture = curY,
+                            cbCrTexture = curCbCr,
+                            targetTexture = hdrLowTexture,
+                            label = "renderHdrLowTexture",
+                        )
+                        hasLowFrame = true
+                    }
+                }
+                GlesGpuScheduler.yieldToUiRenderer()
+            }
+
+            if (!hasHighFrame || !hasLowFrame) {
+                PLog.w(TAG, "GLES HDR YUV stack missing side frames high=$hasHighFrame low=$hasLowFrame")
+                return null
+            }
+            renderAccumulatorToTexture(
+                accumulatorTexture = currentAccumulatorTexture,
+                targetTexture = hdrZeroTexture,
+                applyDenoise = true,
+                label = "renderHdrZeroTexture",
+            )
+            renderMertensFusionToOutput(
+                inputTextures = intArrayOf(hdrZeroTexture, hdrHighTexture, hdrLowTexture),
+                exposureProducts = exposureProducts,
+                enableDeghostMask = true,
+            )
+            GlesGpuScheduler.yieldToUiRenderer()
+            val result = readOutputBitmap() ?: return null
+            return result
+        } catch (e: Exception) {
+            PLog.e(TAG, "GLES HDR YUV stacking failed", e)
+            return null
+        } finally {
+            release()
+            GlesGpuScheduler.restoreCurrentThreadPriority(originalThreadPriority, TAG)
+        }
+    }
+
+    private fun validateHdrInputFrames(frames: List<HdrInputFrame>): Boolean {
+        if (frames.size < 3 || width <= 0 || height <= 0 || outputWidth <= 0 || outputHeight <= 0) {
+            return false
+        }
+        if (frames.count { it.role == HdrFrameRole.ZERO_EV } < 1 ||
+            frames.count { it.role == HdrFrameRole.HIGH_EV } != 1 ||
+            frames.count { it.role == HdrFrameRole.LOW_EV } != 1
+        ) {
+            PLog.w(TAG, "HDR YUV stack requires zero/high/low frames, got roles=${frames.map { it.role }}")
+            return false
+        }
+        val images = frames.map { it.image }
+        if (!supportsImageFormat(inputFormat)) {
+            PLog.w(TAG, "Unsupported GLES HDR YUV stack format: $inputFormat")
+            return false
+        }
+        if (images.any { it.format != inputFormat }) {
+            PLog.w(TAG, "Mixed HDR YUV formats in one stack are not supported")
+            return false
+        }
+        if (images.any { it.width != width || it.height != height }) {
+            PLog.w(TAG, "Mixed HDR YUV frame sizes in one stack are not supported")
+            return false
+        }
+        return true
+    }
+
+    private fun validExposureProduct(exposureProduct: Float): Float {
+        return exposureProduct
+            .takeIf { it.isFinite() && it > 0f }
+            ?: 1.0f
+    }
+
+    private fun currentToReferenceExposureScale(
+        referenceExposureProduct: Float,
+        currentExposureProduct: Float,
+    ): Float {
+        val reference = validExposureProduct(referenceExposureProduct)
+        val current = validExposureProduct(currentExposureProduct)
+        return (reference / current).coerceIn(1.0f / 32.0f, 32.0f)
     }
 
     private fun initEgl() {
@@ -238,6 +458,18 @@ class GlesYuvStacker(
         planarChroma16Program = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, PLANAR_CHROMA_16_FRAGMENT_SHADER, "planar_chroma_16")
     }
 
+    private fun initHdrPrograms() {
+        if (alignedFrameOutputProgram != 0) return
+        alignedFrameOutputProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, ALIGNED_FRAME_OUTPUT_FRAGMENT_SHADER, "aligned_frame_output")
+        mertensWeightProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_WEIGHT_FRAGMENT_SHADER, "mertens_weight")
+        mertensNormalizeProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_NORMALIZE_FRAGMENT_SHADER, "mertens_normalize")
+        mertensPyrDownProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_PYR_DOWN_FRAGMENT_SHADER, "mertens_pyr_down")
+        mertensLaplacianProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_LAPLACIAN_FRAGMENT_SHADER, "mertens_laplacian")
+        mertensCombineProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_COMBINE_FRAGMENT_SHADER, "mertens_combine")
+        mertensReconstructProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_RECONSTRUCT_FRAGMENT_SHADER, "mertens_reconstruct")
+        mertensCopyProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_COPY_FRAGMENT_SHADER, "mertens_copy")
+    }
+
     private fun initResources() {
         gridWidth = (width + FLOW_GRID_SPACING - 1) / FLOW_GRID_SPACING
         gridHeight = (height + FLOW_GRID_SPACING - 1) / FLOW_GRID_SPACING
@@ -265,6 +497,13 @@ class GlesYuvStacker(
 
         renderFbo = createFramebuffer()
         readbackFbo = createFramebuffer()
+    }
+
+    private fun ensureHdrFusionTextures() {
+        if (hdrZeroTexture != 0 && hdrHighTexture != 0 && hdrLowTexture != 0) return
+        hdrZeroTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
+        hdrHighTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
+        hdrLowTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
     }
 
     private fun createPyramid(baseTexture: Int): List<TextureLevel> {
@@ -781,7 +1020,11 @@ class GlesYuvStacker(
         currentAccumulatorTexture = accumulatorTexture
     }
 
-    private fun alignCurrentToReference(reference: List<TextureLevel>, current: List<TextureLevel>) {
+    private fun alignCurrentToReference(
+        reference: List<TextureLevel>,
+        current: List<TextureLevel>,
+        currentToReferenceScale: Float = 1.0f,
+    ) {
         val levelIndex = ALIGN_LEVEL.coerceAtMost(reference.lastIndex).coerceAtMost(current.lastIndex)
         val ref = reference[levelIndex]
         val cur = current[levelIndex]
@@ -798,6 +1041,7 @@ class GlesYuvStacker(
         GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uLevelScale"), 1 shl levelIndex)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSearchRadius"), SEARCH_RADIUS_LEVEL)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSampleStep"), ALIGN_SAMPLE_STEP)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(alignProgram, "uCurrentToReferenceScale"), currentToReferenceScale)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("alignCurrentToReference")
     }
@@ -817,7 +1061,7 @@ class GlesYuvStacker(
         }
     }
 
-    private fun computeRobustness() {
+    private fun computeRobustness(currentToReferenceScale: Float = 1.0f) {
         bindFramebufferOutput(robustnessTexture, "computeRobustness")
         GLES30.glViewport(0, 0, width, height)
         GLES30.glUseProgram(robustnessProgram)
@@ -831,6 +1075,7 @@ class GlesYuvStacker(
         GLES31.glUniform1i(GLES31.glGetUniformLocation(robustnessProgram, "uTileSize"), FLOW_GRID_SPACING)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(robustnessProgram, "uNoiseAlpha"), NOISE_ALPHA)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(robustnessProgram, "uNoiseBeta"), NOISE_BETA)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(robustnessProgram, "uCurrentToReferenceScale"), currentToReferenceScale)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("computeRobustness")
     }
@@ -882,10 +1127,23 @@ class GlesYuvStacker(
     }
 
     private fun normalizeOutput() {
-        bindFramebufferOutput(outputTexture, "normalizeOutput")
+        renderAccumulatorToOutput(currentAccumulatorTexture, applyDenoise = true)
+    }
+
+    private fun renderAccumulatorToOutput(accumulatorTexture: Int, applyDenoise: Boolean) {
+        renderAccumulatorToTexture(accumulatorTexture, outputTexture, applyDenoise, "normalizeOutput")
+    }
+
+    private fun renderAccumulatorToTexture(
+        accumulatorTexture: Int,
+        targetTexture: Int,
+        applyDenoise: Boolean,
+        label: String,
+    ) {
+        bindFramebufferOutput(targetTexture, label)
         GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
         GLES30.glUseProgram(normalizeProgram)
-        bindTexture(normalizeProgram, "uAccumulator", 0, currentAccumulatorTexture)
+        bindTexture(normalizeProgram, "uAccumulator", 0, accumulatorTexture)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(normalizeProgram, "uInputSize"), width, height)
         val transform = computeRenderTransform()
         GLES31.glUniform3f(
@@ -902,11 +1160,342 @@ class GlesYuvStacker(
         )
         GLES31.glUniform1f(GLES31.glGetUniformLocation(normalizeProgram, "uNoiseBeta"), NOISE_BETA)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uIsP010"), if (highPrecisionInput) 1 else 0)
-        val directOffset = computeDirectSourceOffset()
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectSource"), if (cpuRotateReadback) 1 else 0)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectOffset"), directOffset[0], directOffset[1])
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uApplyDenoise"), if (applyDenoise) 1 else 0)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectSource"), 0)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectOffset"), 0, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-        finishFramebufferPass("normalizeOutput")
+        finishFramebufferPass(label)
+    }
+
+    private fun renderHdrSideFrameToTexture(
+        yTexture: Int,
+        cbCrTexture: Int,
+        targetTexture: Int,
+        label: String,
+    ) {
+        bindFramebufferOutput(targetTexture, label)
+        GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
+        GLES30.glUseProgram(alignedFrameOutputProgram)
+        bindTexture(alignedFrameOutputProgram, "uCurrentY", 0, yTexture)
+        bindTexture(alignedFrameOutputProgram, "uCurrentCbCr", 1, cbCrTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uInputSize"), width, height)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uIsP010"), if (highPrecisionInput) 1 else 0)
+        val transform = computeRenderTransform()
+        GLES31.glUniform3f(
+            GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uTransformX"),
+            transform[0],
+            transform[1],
+            transform[2],
+        )
+        GLES31.glUniform3f(
+            GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uTransformY"),
+            transform[3],
+            transform[4],
+            transform[5],
+        )
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uDirectSource"), 0)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uDirectOffset"), 0, 0)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishFramebufferPass(label)
+    }
+
+    private fun renderMertensFusionToOutput(
+        inputTextures: IntArray,
+        exposureProducts: FloatArray?,
+        enableDeghostMask: Boolean,
+    ) {
+        if (inputTextures.size != HDR_BRACKET_FRAME_COUNT) {
+            throw IllegalArgumentException("Mertens fusion expects $HDR_BRACKET_FRAME_COUNT textures")
+        }
+        val fusionWidth = gpuOutputWidth
+        val fusionHeight = gpuOutputHeight
+        val maxLevel = (ln(min(fusionWidth, fusionHeight).toFloat()) / ln(2f)).toInt().coerceAtLeast(0)
+        val exposureScales = normalizeMertensExposureProducts(exposureProducts)
+        val resultPyramid = ArrayList<MertensRenderTarget>(maxLevel + 1)
+        var currentImages = inputTextures.map { MertensTextureLevel(fusionWidth, fusionHeight, it, owned = false) }
+        var currentWeights: MertensRenderTarget? = null
+        var reconstructed: MertensRenderTarget? = null
+
+        try {
+            val referenceTexture = inputTextures[HDR_BRACKET_ZERO_INDEX]
+            val rawWeights = inputTextures.mapIndexed { index, texture ->
+                createMertensRenderTarget(fusionWidth, fusionHeight, halfFloat = true).also {
+                    renderMertensWeight(
+                        imageTexture = texture,
+                        referenceTexture = referenceTexture,
+                        target = it,
+                        exposureScale = exposureScales[index],
+                        useDeghostMask = enableDeghostMask && index != HDR_BRACKET_ZERO_INDEX,
+                    )
+                }
+            }
+            currentWeights = createMertensRenderTarget(fusionWidth, fusionHeight, halfFloat = true)
+            renderMertensNormalizeWeights(rawWeights, currentWeights)
+            rawWeights.forEach { it.release() }
+
+            for (level in 0 until maxLevel) {
+                val weights = currentWeights ?: throw IllegalStateException("Missing Mertens weight pyramid level $level")
+                val currentWidth = currentImages.first().width
+                val currentHeight = currentImages.first().height
+                val nextWidth = ((currentWidth + 1) / 2).coerceAtLeast(1)
+                val nextHeight = ((currentHeight + 1) / 2).coerceAtLeast(1)
+
+                val nextImages = currentImages.map { source ->
+                    createMertensRenderTarget(nextWidth, nextHeight, halfFloat = true).also {
+                        renderMertensPyrDown(source.textureId, source.width, source.height, it)
+                    }
+                }
+                val nextWeights = createMertensRenderTarget(nextWidth, nextHeight, halfFloat = true).also {
+                    renderMertensPyrDown(weights.textureId, weights.width, weights.height, it)
+                }
+
+                val laplacians = currentImages.mapIndexed { index, source ->
+                    createMertensRenderTarget(currentWidth, currentHeight, halfFloat = true).also {
+                        renderMertensLaplacian(source.textureId, nextImages[index].textureId, nextImages[index].width, nextImages[index].height, it)
+                    }
+                }
+                val resultLevel = createMertensRenderTarget(currentWidth, currentHeight, halfFloat = true)
+                renderMertensWeightedSum(laplacians, weights, resultLevel)
+                resultPyramid.add(resultLevel)
+
+                laplacians.forEach { it.release() }
+                currentImages.forEach { it.releaseIfOwned() }
+                weights.release()
+
+                currentImages = nextImages.map { MertensTextureLevel(it.width, it.height, it.textureId, owned = true, owner = it) }
+                currentWeights = nextWeights
+            }
+
+            val weights = currentWeights
+            val topLevel = createMertensRenderTarget(currentImages.first().width, currentImages.first().height, halfFloat = true)
+            renderMertensWeightedSum(
+                currentImages.map { MertensTextureOnlyTarget(it.width, it.height, it.textureId) },
+                weights,
+                topLevel,
+            )
+            resultPyramid.add(topLevel)
+            currentImages.forEach { it.releaseIfOwned() }
+            weights.release()
+            currentWeights = null
+
+            reconstructed = resultPyramid.removeAt(resultPyramid.lastIndex)
+            for (level in resultPyramid.lastIndex downTo 0) {
+                val base = resultPyramid[level]
+                val currentReconstruction = requireNotNull(reconstructed) {
+                    "Missing Mertens reconstruction level ${level + 1}"
+                }
+                val isFinalLevel = level == 0
+                val target = if (isFinalLevel) {
+                    createMertensExternalTarget(fusionWidth, fusionHeight, outputTexture)
+                } else {
+                    createMertensRenderTarget(base.width, base.height, halfFloat = true)
+                }
+                renderMertensReconstruct(
+                    base.textureId,
+                    currentReconstruction.textureId,
+                    currentReconstruction.width,
+                    currentReconstruction.height,
+                    target,
+                )
+                currentReconstruction.release()
+                base.release()
+                reconstructed = target
+            }
+
+            if (maxLevel == 0) {
+                val finalReconstruction = requireNotNull(reconstructed) {
+                    "Missing Mertens final reconstruction"
+                }
+                val outputTarget = createMertensExternalTarget(fusionWidth, fusionHeight, outputTexture)
+                renderMertensCopy(finalReconstruction.textureId, outputTarget)
+                finalReconstruction.release()
+                outputTarget.release()
+                reconstructed = null
+            }
+        } finally {
+            currentImages.forEach { it.releaseIfOwned() }
+            currentWeights?.release()
+            reconstructed?.release()
+            resultPyramid.forEach { it.release() }
+        }
+    }
+
+    private fun normalizeMertensExposureProducts(exposureProducts: FloatArray?): FloatArray {
+        val reference = exposureProducts
+            ?.getOrNull(HDR_BRACKET_ZERO_INDEX)
+            ?.takeIf { it.isFinite() && it > 0f }
+            ?: 1f
+        return FloatArray(HDR_BRACKET_FRAME_COUNT) { index ->
+            val product = exposureProducts
+                ?.getOrNull(index)
+                ?.takeIf { it.isFinite() && it > 0f }
+                ?: reference
+            (product / reference).coerceIn(1f / 32f, 32f)
+        }
+    }
+
+    private fun renderMertensWeight(
+        imageTexture: Int,
+        referenceTexture: Int,
+        target: MertensRenderTarget,
+        exposureScale: Float,
+        useDeghostMask: Boolean,
+    ) {
+        GLES30.glUseProgram(mertensWeightProgram)
+        bindMertensTarget(target)
+        bindTexture(mertensWeightProgram, "uImage", 0, imageTexture)
+        bindTexture(mertensWeightProgram, "uReferenceImage", 1, referenceTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(mertensWeightProgram, "uImageSize"), target.width, target.height)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(mertensWeightProgram, "uContrastWeight"), DEFAULT_MERTENS_CONTRAST_WEIGHT)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(mertensWeightProgram, "uSaturationWeight"), DEFAULT_MERTENS_SATURATION_WEIGHT)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(mertensWeightProgram, "uExposureWeight"), DEFAULT_MERTENS_EXPOSURE_WEIGHT)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(mertensWeightProgram, "uExposureScale"), exposureScale)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(mertensWeightProgram, "uUseDeghostMask"), if (useDeghostMask) 1 else 0)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensWeight")
+    }
+
+    private fun renderMertensNormalizeWeights(rawWeights: List<MertensRenderTarget>, target: MertensRenderTarget) {
+        GLES30.glUseProgram(mertensNormalizeProgram)
+        bindMertensTarget(target)
+        rawWeights.forEachIndexed { index, weight ->
+            bindTexture(mertensNormalizeProgram, "uWeight$index", index, weight.textureId)
+        }
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensNormalizeWeights")
+    }
+
+    private fun renderMertensPyrDown(sourceTexture: Int, sourceWidth: Int, sourceHeight: Int, target: MertensRenderTarget) {
+        GLES30.glUseProgram(mertensPyrDownProgram)
+        bindMertensTarget(target)
+        bindTexture(mertensPyrDownProgram, "uInputTexture", 0, sourceTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(mertensPyrDownProgram, "uSourceSize"), sourceWidth, sourceHeight)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensPyrDown")
+    }
+
+    private fun renderMertensLaplacian(
+        baseTexture: Int,
+        nextTexture: Int,
+        nextWidth: Int,
+        nextHeight: Int,
+        target: MertensRenderTarget,
+    ) {
+        GLES30.glUseProgram(mertensLaplacianProgram)
+        bindMertensTarget(target)
+        bindTexture(mertensLaplacianProgram, "uBaseTexture", 0, baseTexture)
+        bindTexture(mertensLaplacianProgram, "uNextTexture", 1, nextTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(mertensLaplacianProgram, "uNextSize"), nextWidth, nextHeight)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensLaplacian")
+    }
+
+    private fun renderMertensWeightedSum(
+        inputs: List<MertensFramebufferSource>,
+        weights: MertensRenderTarget,
+        target: MertensRenderTarget,
+    ) {
+        GLES30.glUseProgram(mertensCombineProgram)
+        bindMertensTarget(target)
+        inputs.forEachIndexed { index, input ->
+            bindTexture(mertensCombineProgram, "uImage$index", index, input.textureId)
+        }
+        bindTexture(mertensCombineProgram, "uWeights", 3, weights.textureId)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensWeightedSum")
+    }
+
+    private fun renderMertensReconstruct(
+        baseTexture: Int,
+        nextTexture: Int,
+        nextWidth: Int,
+        nextHeight: Int,
+        target: MertensRenderTarget,
+    ) {
+        GLES30.glUseProgram(mertensReconstructProgram)
+        bindMertensTarget(target)
+        bindTexture(mertensReconstructProgram, "uBaseTexture", 0, baseTexture)
+        bindTexture(mertensReconstructProgram, "uNextTexture", 1, nextTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(mertensReconstructProgram, "uNextSize"), nextWidth, nextHeight)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensReconstruct")
+    }
+
+    private fun renderMertensCopy(sourceTexture: Int, target: MertensRenderTarget) {
+        GLES30.glUseProgram(mertensCopyProgram)
+        bindMertensTarget(target)
+        bindTexture(mertensCopyProgram, "uInputTexture", 0, sourceTexture)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+        finishMertensPass("renderMertensCopy")
+    }
+
+    private fun bindMertensTarget(target: MertensRenderTarget) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, target.framebufferId)
+        GLES30.glViewport(0, 0, target.width, target.height)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+    }
+
+    private fun finishMertensPass(label: String) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError(label)
+    }
+
+    private fun createMertensRenderTarget(width: Int, height: Int, halfFloat: Boolean): MertensRenderTarget {
+        val texture = createMertensTexture(width, height, halfFloat)
+        val framebuffer = createMertensFramebuffer(texture, width, height, "createMertensRenderTarget")
+        return MertensRenderTarget(width, height, texture, framebuffer)
+    }
+
+    private fun createMertensExternalTarget(width: Int, height: Int, texture: Int): MertensRenderTarget {
+        val framebuffer = createMertensFramebuffer(texture, width, height, "createMertensExternalTarget")
+        return MertensRenderTarget(width, height, texture, framebuffer, ownsTexture = false)
+    }
+
+    private fun createMertensTexture(width: Int, height: Int, halfFloat: Boolean): Int {
+        val ids = IntArray(1)
+        GLES30.glGenTextures(1, ids, 0)
+        val texture = ids[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture)
+        val internalFormat = if (halfFloat) GLES30.GL_RGBA16F else GLES30.GL_RGBA
+        val type = if (halfFloat) GLES30.GL_HALF_FLOAT else GLES30.GL_UNSIGNED_BYTE
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            internalFormat,
+            width,
+            height,
+            0,
+            GLES30.GL_RGBA,
+            type,
+            null,
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        checkGlError("createMertensTexture")
+        return texture
+    }
+
+    private fun createMertensFramebuffer(texture: Int, width: Int, height: Int, label: String): Int {
+        val ids = IntArray(1)
+        GLES30.glGenFramebuffers(1, ids, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, ids[0])
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            texture,
+            0,
+        )
+        val drawBuffers = intArrayOf(GLES30.GL_COLOR_ATTACHMENT0)
+        GLES30.glDrawBuffers(drawBuffers.size, drawBuffers, 0)
+        GLES30.glViewport(0, 0, width, height)
+        checkFramebuffer(label)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        return ids[0]
     }
 
     private fun readOutputBitmap(): Bitmap? {
@@ -929,46 +1518,12 @@ class GlesYuvStacker(
             GLES30.glReadPixels(0, 0, gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
             buffer.position(0)
-            if (cpuRotateReadback) {
-                copyRotatedReadbackToBitmap(buffer, bitmap)
-            } else {
-                bitmap.copyPixelsFromBuffer(buffer)
-            }
+            bitmap.copyPixelsFromBuffer(buffer)
             checkGlError("readOutputBitmap")
         } finally {
             LargeDirectBuffer.free(buffer)
         }
         return bitmap
-    }
-
-    private fun copyRotatedReadbackToBitmap(buffer: ByteBuffer, bitmap: Bitmap) {
-        val rotatedByteCount = renderOutputWidth.toLong() * renderOutputHeight.toLong() * 4L
-        val rotated = LargeDirectBuffer.allocate(rotatedByteCount, "GLES YUV rotated readback") ?: return
-        try {
-            for (y in 0 until renderOutputHeight) {
-                for (x in 0 until renderOutputWidth) {
-                    val sourceX: Int
-                    val sourceY: Int
-                    if (normalizedRotation == 90) {
-                        sourceX = y
-                        sourceY = gpuOutputHeight - 1 - x
-                    } else {
-                        sourceX = gpuOutputWidth - 1 - y
-                        sourceY = x
-                    }
-                    val sourceOffset = (sourceY * gpuOutputWidth + sourceX) * 4
-                    val destOffset = (y * renderOutputWidth + x) * 4
-                    rotated.put(destOffset, buffer.get(sourceOffset))
-                    rotated.put(destOffset + 1, buffer.get(sourceOffset + 1))
-                    rotated.put(destOffset + 2, buffer.get(sourceOffset + 2))
-                    rotated.put(destOffset + 3, buffer.get(sourceOffset + 3))
-                }
-            }
-            rotated.position(0)
-            bitmap.copyPixelsFromBuffer(rotated)
-        } finally {
-            LargeDirectBuffer.free(rotated)
-        }
     }
 
     private fun createTexture2D(
@@ -1119,43 +1674,15 @@ class GlesYuvStacker(
     }
 
     private fun computeRenderTransform(): FloatArray {
-        if (!cpuRotateReadback) {
-            return computeNormalizeTransform()
-        }
-        val offset = computeDirectSourceOffset()
-        val offsetX = offset[0].toFloat()
-        val offsetY = offset[1].toFloat()
-        return floatArrayOf(
-            1.0f, 0.0f, offsetX,
-            0.0f, 1.0f, offsetY,
-        )
-    }
-
-    private fun computeDirectSourceOffset(): IntArray {
-        if (!cpuRotateReadback) {
-            return intArrayOf(0, 0)
-        }
-        val rotatedWidth = if (normalizedRotation == 90 || normalizedRotation == 270) height else width
-        val rotatedHeight = if (normalizedRotation == 90 || normalizedRotation == 270) width else height
-        val cropX = ((rotatedWidth - outputWidth).coerceAtLeast(0) / 4) * 2
-        val cropY = ((rotatedHeight - outputHeight).coerceAtLeast(0) / 4) * 2
-        return when (normalizedRotation) {
-            90 -> intArrayOf(
-                cropY,
-                height - cropX - gpuOutputHeight,
-            )
-            270 -> intArrayOf(
-                width - cropY - gpuOutputWidth,
-                cropX,
-            )
-            else -> intArrayOf(0, 0)
-        }
+        return computeNormalizeTransform()
     }
 
     companion object {
         private const val TAG = "GlesYuvStacker"
 
         private const val EGL_OPENGL_ES3_BIT_KHR = 0x00000040
+        private const val HDR_BRACKET_FRAME_COUNT = 3
+        private const val HDR_BRACKET_ZERO_INDEX = 0
         private const val PYRAMID_LEVELS = 4
         private const val ALIGN_LEVEL = 2
         private const val FLOW_GRID_SPACING = 8
@@ -1167,6 +1694,9 @@ class GlesYuvStacker(
         private const val NON_REFERENCE_FRAME_WEIGHT = 0.92f
         private const val NOISE_ALPHA = 0.005f
         private const val NOISE_BETA = 0.001f
+        private const val DEFAULT_MERTENS_CONTRAST_WEIGHT = 1.0f
+        private const val DEFAULT_MERTENS_SATURATION_WEIGHT = 1.0f
+        private const val DEFAULT_MERTENS_EXPOSURE_WEIGHT = 1.0f
 
         fun supportsImageFormat(format: Int): Boolean {
             return format == ImageFormat.YUV_420_888 || format == ImageFormat.YCBCR_P010
@@ -1367,11 +1897,16 @@ class GlesYuvStacker(
             uniform int uLevelScale;
             uniform int uSearchRadius;
             uniform int uSampleStep;
+            uniform float uCurrentToReferenceScale;
             out vec4 fragColor;
 
             float readTex(sampler2D tex, ivec2 p) {
                 p = clamp(p, ivec2(0), uLevelSize - ivec2(1));
                 return texelFetch(tex, p, 0).r;
+            }
+
+            float readCurrentForReference(ivec2 p) {
+                return clamp(readTex(uCurrent, p) * uCurrentToReferenceScale, 0.0, 1.0);
             }
 
             void main() {
@@ -1392,7 +1927,7 @@ class GlesYuvStacker(
                                 ivec2 rp = levelStart + ivec2(sx, sy);
                                 ivec2 cp = rp + ivec2(dx, dy);
                                 float rv = readTex(uReference, rp);
-                                float cv = readTex(uCurrent, cp);
+                                float cv = readCurrentForReference(cp);
                                 sad += abs(rv - cv);
                                 count += 1.0;
                             }
@@ -1459,6 +1994,7 @@ class GlesYuvStacker(
             uniform int uTileSize;
             uniform float uNoiseAlpha;
             uniform float uNoiseBeta;
+            uniform float uCurrentToReferenceScale;
             out vec4 fragColor;
 
             vec2 flowAt(vec2 pixel) {
@@ -1478,7 +2014,7 @@ class GlesYuvStacker(
             }
 
             float curYNorm(vec2 pixel) {
-                return curYRaw(pixel);
+                return clamp(curYRaw(pixel) * uCurrentToReferenceScale, 0.0, 1.0);
             }
 
             vec2 chromaUv(vec2 pixel) {
@@ -1696,6 +2232,378 @@ class GlesYuvStacker(
             }
         """.trimIndent()
 
+        private val ALIGNED_FRAME_OUTPUT_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            uniform sampler2D uCurrentY;
+            uniform sampler2D uCurrentCbCr;
+            uniform ivec2 uInputSize;
+            uniform int uIsP010;
+            uniform int uDirectSource;
+            uniform ivec2 uDirectOffset;
+            uniform vec3 uTransformX;
+            uniform vec3 uTransformY;
+            out vec4 fragColor;
+
+            vec3 sampleYcc(vec2 pixel) {
+                vec2 uv = (pixel + vec2(0.5)) / vec2(uInputSize);
+                uv = clamp(uv, vec2(0.0), vec2(1.0));
+                float y = texture(uCurrentY, uv).r;
+                ivec2 chromaSize = (uInputSize + ivec2(1)) / 2;
+                vec2 chromaPixel = floor(pixel * 0.5);
+                vec2 chromaUv = clamp((chromaPixel + vec2(0.5)) / vec2(chromaSize), vec2(0.0), vec2(1.0));
+                vec2 cbcr = texture(uCurrentCbCr, chromaUv).rg;
+                return vec3(y, cbcr);
+            }
+
+            vec2 referencePixel(ivec2 outP) {
+                if (uDirectSource != 0) {
+                    ivec2 source = outP + uDirectOffset;
+                    return vec2(float(source.x), float(source.y));
+                }
+                return vec2(
+                    float(outP.x) * uTransformX.x + float(outP.y) * uTransformX.y + uTransformX.z,
+                    float(outP.x) * uTransformY.x + float(outP.y) * uTransformY.y + uTransformY.z
+                );
+            }
+
+            vec3 yccToRgb(vec3 ycc) {
+                float y = ycc.x;
+                float cb = ycc.y - 0.5;
+                float cr = ycc.z - 0.5;
+                if (uIsP010 != 0) {
+                    return vec3(
+                        y + 1.4746 * cr,
+                        y - 0.16455 * cb - 0.57135 * cr,
+                        y + 1.8814 * cb
+                    );
+                }
+                return vec3(
+                    y + 1.402 * cr,
+                    y - 0.344136 * cb - 0.714136 * cr,
+                    y + 1.772 * cb
+                );
+            }
+
+            void main() {
+                ivec2 outP = ivec2(gl_FragCoord.xy);
+                vec2 maxInput = vec2(float(uInputSize.x - 1), float(uInputSize.y - 1));
+                vec2 source = clamp(referencePixel(outP), vec2(0.0), maxInput);
+                vec3 ycc = sampleYcc(source);
+                fragColor = vec4(clamp(yccToRgb(ycc), vec3(0.0), vec3(1.0)), 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_COMMON_PYRAMID_GLSL = """
+            int reflect101(int p, int size) {
+                if (size <= 1) return 0;
+                int period = size * 2 - 2;
+                int m = p;
+                if (m < 0) m = -m;
+                m = m - (m / period) * period;
+                return m >= size ? period - m : m;
+            }
+
+            float kernel5(int offset) {
+                int a = offset < 0 ? -offset : offset;
+                if (a == 0) return 6.0;
+                if (a == 1) return 4.0;
+                return 1.0;
+            }
+
+            vec4 pyrUpSample(sampler2D inputTexture, ivec2 dstCoord, ivec2 sourceSize) {
+                vec4 sum = vec4(0.0);
+                for (int y = -2; y <= 2; y++) {
+                    int syNumerator = dstCoord.y - y;
+                    if ((syNumerator < 0 ? -syNumerator : syNumerator) - ((syNumerator < 0 ? -syNumerator : syNumerator) / 2) * 2 != 0) {
+                        continue;
+                    }
+                    int sy = reflect101(syNumerator / 2, sourceSize.y);
+                    float wy = kernel5(y);
+                    for (int x = -2; x <= 2; x++) {
+                        int sxNumerator = dstCoord.x - x;
+                        if ((sxNumerator < 0 ? -sxNumerator : sxNumerator) - ((sxNumerator < 0 ? -sxNumerator : sxNumerator) / 2) * 2 != 0) {
+                            continue;
+                        }
+                        int sx = reflect101(sxNumerator / 2, sourceSize.x);
+                        float wx = kernel5(x);
+                        sum += texelFetch(inputTexture, ivec2(sx, sy), 0) * (wx * wy);
+                    }
+                }
+                return sum / 64.0;
+            }
+        """.trimIndent()
+
+        private val MERTENS_WEIGHT_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            precision highp int;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uImage;
+            uniform sampler2D uReferenceImage;
+            uniform ivec2 uImageSize;
+            uniform float uContrastWeight;
+            uniform float uSaturationWeight;
+            uniform float uExposureWeight;
+            uniform float uExposureScale;
+            uniform int uUseDeghostMask;
+
+            int reflect101(int p, int size) {
+                if (size <= 1) return 0;
+                int period = size * 2 - 2;
+                int m = p;
+                if (m < 0) m = -m;
+                m = m - (m / period) * period;
+                return m >= size ? period - m : m;
+            }
+
+            float grayAt(ivec2 coord) {
+                int x = reflect101(coord.x, uImageSize.x);
+                int y = reflect101(coord.y, uImageSize.y);
+                vec3 rgb = texelFetch(uImage, ivec2(x, y), 0).rgb;
+                return dot(rgb, vec3(0.299, 0.587, 0.114));
+            }
+
+            float luma(vec3 rgb) {
+                return dot(rgb, vec3(0.299, 0.587, 0.114));
+            }
+
+            float max3(vec3 value) {
+                return max(max(value.r, value.g), value.b);
+            }
+
+            float validity(vec3 rgb) {
+                float y = luma(rgb);
+                float blackGate = smoothstep(0.055, 0.145, y);
+                float whiteGate = 1.0 - smoothstep(0.865, 0.975, max3(rgb));
+                return clamp(blackGate * whiteGate, 0.0, 1.0);
+            }
+
+            float referenceStructure(ivec2 coord) {
+                float c = luma(texelFetch(uReferenceImage, coord, 0).rgb);
+                float l = luma(texelFetch(uReferenceImage, ivec2(reflect101(coord.x - 1, uImageSize.x), coord.y), 0).rgb);
+                float r = luma(texelFetch(uReferenceImage, ivec2(reflect101(coord.x + 1, uImageSize.x), coord.y), 0).rgb);
+                float u = luma(texelFetch(uReferenceImage, ivec2(coord.x, reflect101(coord.y - 1, uImageSize.y)), 0).rgb);
+                float d = luma(texelFetch(uReferenceImage, ivec2(coord.x, reflect101(coord.y + 1, uImageSize.y)), 0).rgb);
+                float gradient = abs(r - l) + abs(d - u);
+                float laplacian = abs(l + r + u + d - 4.0 * c);
+                return smoothstep(0.030, 0.095, gradient + 0.5 * laplacian);
+            }
+
+            float censusMismatch(ivec2 coord, float refCenter, float sideCenter) {
+                float mismatch = 0.0;
+                float count = 0.0;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        if (x == 0 && y == 0) {
+                            continue;
+                        }
+                        ivec2 p = ivec2(reflect101(coord.x + x, uImageSize.x), reflect101(coord.y + y, uImageSize.y));
+                        float refNeighbor = luma(texelFetch(uReferenceImage, p, 0).rgb);
+                        float sideNeighbor = luma(texelFetch(uImage, p, 0).rgb);
+                        float refRank = refNeighbor > refCenter ? 1.0 : 0.0;
+                        float sideRank = sideNeighbor > sideCenter ? 1.0 : 0.0;
+                        mismatch += abs(refRank - sideRank);
+                        count += 1.0;
+                    }
+                }
+                return mismatch / max(count, 1.0);
+            }
+
+            float deghostScoreAt(ivec2 coord) {
+                int x = reflect101(coord.x, uImageSize.x);
+                int y = reflect101(coord.y, uImageSize.y);
+                vec3 side = texelFetch(uImage, ivec2(x, y), 0).rgb;
+                vec3 reference = texelFetch(uReferenceImage, ivec2(x, y), 0).rgb;
+                float scale = clamp(uExposureScale, 0.03125, 32.0);
+
+                float sideLuma = luma(side);
+                float referenceLuma = luma(reference);
+                float comparable = validity(side) * validity(reference) * referenceStructure(ivec2(x, y));
+                if (comparable <= 0.001) {
+                    return 0.0;
+                }
+
+                float exposureGap = abs(log2(scale));
+                float logResidual = abs(log(max(sideLuma, 1e-4)) - log(max(referenceLuma, 1e-4)) - log(scale));
+                float logMotion = smoothstep(0.28 + 0.04 * min(exposureGap, 3.0), 0.72, logResidual);
+                float expectedSide = referenceLuma * scale;
+                float linearResidual = abs(sideLuma - expectedSide) / max(max(sideLuma, expectedSide), 1e-4);
+                float linearMotion = smoothstep(0.12, 0.42, linearResidual);
+                float rankMotion = smoothstep(0.32, 0.68, censusMismatch(ivec2(x, y), referenceLuma, sideLuma));
+                float score = max(max(linearMotion, logMotion), rankMotion);
+                return comparable * score;
+            }
+
+            float computeDeghostAlpha(ivec2 coord) {
+                if (uUseDeghostMask == 0) {
+                    return 1.0;
+                }
+                float score = 0.0;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        score = max(score, deghostScoreAt(coord + ivec2(x, y)));
+                    }
+                }
+                float reject = smoothstep(0.36, 0.76, score);
+                return mix(1.0, 0.0, reject);
+            }
+
+            void main() {
+                ivec2 coord = ivec2(gl_FragCoord.xy);
+                vec3 rgb = texelFetch(uImage, coord, 0).rgb;
+                float center = grayAt(coord);
+                float contrast = abs(
+                    grayAt(coord + ivec2(-1, 0)) +
+                    grayAt(coord + ivec2(1, 0)) +
+                    grayAt(coord + ivec2(0, -1)) +
+                    grayAt(coord + ivec2(0, 1)) -
+                    center * 4.0
+                );
+
+                float mean = (rgb.r + rgb.g + rgb.b) / 3.0;
+                vec3 deviation = rgb - vec3(mean);
+                float saturation = sqrt(dot(deviation, deviation));
+
+                vec3 expoDelta = rgb - vec3(0.5);
+                vec3 expo = exp(-(expoDelta * expoDelta) / 0.08);
+                float wellExposedness = expo.r * expo.g * expo.b;
+
+                float weight =
+                    pow(max(contrast, 0.0), uContrastWeight) *
+                    pow(max(saturation, 0.0), uSaturationWeight) *
+                    pow(max(wellExposedness, 0.0), uExposureWeight);
+                weight = weight * computeDeghostAlpha(coord) + 1e-12;
+                fragColor = vec4(weight, weight, weight, 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_NORMALIZE_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uWeight0;
+            uniform sampler2D uWeight1;
+            uniform sampler2D uWeight2;
+            void main() {
+                float w0 = texture(uWeight0, vTexCoord).r;
+                float w1 = texture(uWeight1, vTexCoord).r;
+                float w2 = texture(uWeight2, vTexCoord).r;
+                float sum = max(w0 + w1 + w2, 1e-12);
+                fragColor = vec4(w0 / sum, w1 / sum, w2 / sum, 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_PYR_DOWN_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            precision highp int;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uInputTexture;
+            uniform ivec2 uSourceSize;
+
+            int reflect101(int p, int size) {
+                if (size <= 1) return 0;
+                int period = size * 2 - 2;
+                int m = p;
+                if (m < 0) m = -m;
+                m = m - (m / period) * period;
+                return m >= size ? period - m : m;
+            }
+
+            float kernel5(int offset) {
+                int a = offset < 0 ? -offset : offset;
+                if (a == 0) return 6.0;
+                if (a == 1) return 4.0;
+                return 1.0;
+            }
+
+            void main() {
+                ivec2 dst = ivec2(gl_FragCoord.xy);
+                ivec2 center = dst * 2;
+                vec4 sum = vec4(0.0);
+                for (int y = -2; y <= 2; y++) {
+                    float wy = kernel5(y);
+                    int sy = reflect101(center.y + y, uSourceSize.y);
+                    for (int x = -2; x <= 2; x++) {
+                        float wx = kernel5(x);
+                        int sx = reflect101(center.x + x, uSourceSize.x);
+                        sum += texelFetch(uInputTexture, ivec2(sx, sy), 0) * (wx * wy);
+                    }
+                }
+                fragColor = sum / 256.0;
+            }
+        """.trimIndent()
+
+        private val MERTENS_LAPLACIAN_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            precision highp int;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uBaseTexture;
+            uniform sampler2D uNextTexture;
+            uniform ivec2 uNextSize;
+            $MERTENS_COMMON_PYRAMID_GLSL
+            void main() {
+                ivec2 coord = ivec2(gl_FragCoord.xy);
+                vec4 base = texelFetch(uBaseTexture, coord, 0);
+                vec4 up = pyrUpSample(uNextTexture, coord, uNextSize);
+                fragColor = vec4(base.rgb - up.rgb, 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_COMBINE_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uImage0;
+            uniform sampler2D uImage1;
+            uniform sampler2D uImage2;
+            uniform sampler2D uWeights;
+            void main() {
+                vec3 weights = texture(uWeights, vTexCoord).rgb;
+                vec3 color =
+                    texture(uImage0, vTexCoord).rgb * weights.r +
+                    texture(uImage1, vTexCoord).rgb * weights.g +
+                    texture(uImage2, vTexCoord).rgb * weights.b;
+                fragColor = vec4(color, 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_RECONSTRUCT_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            precision highp int;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uBaseTexture;
+            uniform sampler2D uNextTexture;
+            uniform ivec2 uNextSize;
+            $MERTENS_COMMON_PYRAMID_GLSL
+            void main() {
+                ivec2 coord = ivec2(gl_FragCoord.xy);
+                vec4 base = texelFetch(uBaseTexture, coord, 0);
+                vec4 up = pyrUpSample(uNextTexture, coord, uNextSize);
+                fragColor = vec4(base.rgb + up.rgb, 1.0);
+            }
+        """.trimIndent()
+
+        private val MERTENS_COPY_FRAGMENT_SHADER = """
+            #version 300 es
+            precision highp float;
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uInputTexture;
+            void main() {
+                fragColor = vec4(clamp(texture(uInputTexture, vTexCoord).rgb, 0.0, 1.0), 1.0);
+            }
+        """.trimIndent()
+
         private val NORMALIZE_FRAGMENT_SHADER = """
             #version 300 es
             precision highp float;
@@ -1707,6 +2615,7 @@ class GlesYuvStacker(
             uniform int uIsP010;
             uniform int uDirectSource;
             uniform ivec2 uDirectOffset;
+            uniform int uApplyDenoise;
             out vec4 fragColor;
 
             bool valid(vec2 p) {
@@ -1772,30 +2681,31 @@ class GlesYuvStacker(
                 }
 
                 vec3 ycc = readYcc(srcP);
-                float accumWeight = readWeight(srcP);
-
-                float mean = 0.0;
-                float mean2 = 0.0;
-                float count = 0.0;
-                for (int y = -1; y <= 1; ++y) {
-                    for (int x = -1; x <= 1; ++x) {
-                        ivec2 q = srcP + ivec2(x, y);
-                        if (!validTexel(q)) {
-                            continue;
+                if (uApplyDenoise != 0) {
+                    float accumWeight = readWeight(srcP);
+                    float mean = 0.0;
+                    float mean2 = 0.0;
+                    float count = 0.0;
+                    for (int y = -1; y <= 1; ++y) {
+                        for (int x = -1; x <= 1; ++x) {
+                            ivec2 q = srcP + ivec2(x, y);
+                            if (!validTexel(q)) {
+                                continue;
+                            }
+                            float yy = readYcc(q).x;
+                            mean += yy;
+                            mean2 += yy * yy;
+                            count += 1.0;
                         }
-                        float yy = readYcc(q).x;
-                        mean += yy;
-                        mean2 += yy * yy;
-                        count += 1.0;
                     }
+                    mean /= max(count, 1.0);
+                    mean2 /= max(count, 1.0);
+                    float variance = max(mean2 - mean * mean, 0.0);
+                    float noise = uNoiseBeta / max(accumWeight, 1.0);
+                    float wienerGain = max(variance - noise, 0.0) / max(variance, 1e-6);
+                    float flatness = 1.0 - smoothstep(0.0004, 0.006, variance);
+                    ycc.x = mix(ycc.x, mean + wienerGain * (ycc.x - mean), 0.55 * flatness);
                 }
-                mean /= max(count, 1.0);
-                mean2 /= max(count, 1.0);
-                float variance = max(mean2 - mean * mean, 0.0);
-                float noise = uNoiseBeta / max(accumWeight, 1.0);
-                float wienerGain = max(variance - noise, 0.0) / max(variance, 1e-6);
-                float flatness = 1.0 - smoothstep(0.0004, 0.006, variance);
-                ycc.x = mix(ycc.x, mean + wienerGain * (ycc.x - mean), 0.55 * flatness);
 
                 vec3 rgb = clamp(yccToRgb(ycc), vec3(0.0), vec3(1.0));
                 fragColor = vec4(rgb, 1.0);

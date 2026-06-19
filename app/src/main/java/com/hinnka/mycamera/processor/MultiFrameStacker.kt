@@ -24,6 +24,18 @@ data class RawHdrStackFrame(
     val exposureProduct: Double,
 )
 
+enum class YuvHdrStackFrameRole {
+    ZERO_EV,
+    HIGH_EV,
+    LOW_EV,
+}
+
+data class YuvHdrStackFrame(
+    val image: SafeImage,
+    val exposureProduct: Float,
+    val role: YuvHdrStackFrameRole,
+)
+
 /**
  * Multi-Frame Stacker
  * 
@@ -151,6 +163,60 @@ object MultiFrameStacker {
         } finally {
             releaseStackerNative(stackerPtr)
         }
+    }
+
+    @Synchronized
+    fun processHdrBurstYuv(
+        frames: List<YuvHdrStackFrame>,
+        fusionExposureProducts: FloatArray?,
+        rotation: Int,
+        aspectRatio: AspectRatio?,
+        useGpuAcceleration: Boolean = true,
+        colorSpace: ColorSpace,
+    ): Bitmap? {
+        if (frames.size < 3) return null
+        val images = frames.map { it.image }
+        val width = images[0].width
+        val height = images[0].height
+        val dimensions = BitmapUtils.calculateProcessedRect(width, height, aspectRatio, null, rotation)
+        val inputFormat = images[0].format
+
+        if (!useGpuAcceleration) {
+            PLog.w(TAG, "YUV HDR denoise stack requires GLES; GPU acceleration setting is ignored")
+        }
+        if (!GlesYuvStacker.supportsImageFormat(inputFormat)) {
+            PLog.w(TAG, "GLES HDR YUV stacker does not support image format=$inputFormat")
+            images.forEach { it.close() }
+            return null
+        }
+
+        val result = try {
+            GlesYuvStacker(
+                width = width,
+                height = height,
+                outputWidth = dimensions.width(),
+                outputHeight = dimensions.height(),
+                rotation = rotation,
+                colorSpace = colorSpace,
+                inputFormat = inputFormat,
+            ).processHdr(
+                frames = frames.map {
+                    GlesYuvStacker.HdrInputFrame(
+                        image = it.image,
+                        exposureProduct = it.exposureProduct,
+                        role = when (it.role) {
+                            YuvHdrStackFrameRole.ZERO_EV -> GlesYuvStacker.HdrFrameRole.ZERO_EV
+                            YuvHdrStackFrameRole.HIGH_EV -> GlesYuvStacker.HdrFrameRole.HIGH_EV
+                            YuvHdrStackFrameRole.LOW_EV -> GlesYuvStacker.HdrFrameRole.LOW_EV
+                        },
+                    )
+                },
+                exposureProducts = fusionExposureProducts,
+            )
+        } finally {
+            images.forEach { it.close() }
+        }
+        return result
     }
 
     @Synchronized
