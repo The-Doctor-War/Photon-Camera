@@ -27,6 +27,13 @@ class GlesRawStacker(
     private val lensShadingHeight: Int,
 ) {
     private data class TextureLevel(val texture: Int, val width: Int, val height: Int)
+    private data class ReadOutputTiming(
+        val elapsedMs: Long,
+        val glReadMs: Long,
+        val copyMs: Long,
+        val allocMs: Long,
+        val mode: String,
+    )
 
     data class HdrInputFrame(
         val image: SafeImage,
@@ -145,10 +152,15 @@ class GlesRawStacker(
 
             normalizeOutput()
             GlesGpuScheduler.yieldToUiRenderer()
-            readOutput(outputBuffer)
+            val readTiming = readOutput(outputBuffer)
             outputBuffer.rewind()
             returned = true
-            PLog.i(TAG, "GLES RAW stacking completed in ${System.currentTimeMillis() - startTime}ms")
+            PLog.i(
+                TAG,
+                "GLES RAW stacking completed in ${System.currentTimeMillis() - startTime}ms " +
+                    "readback=${readTiming.elapsedMs}ms glRead=${readTiming.glReadMs}ms " +
+                    "copy=${readTiming.copyMs}ms alloc=${readTiming.allocMs}ms mode=${readTiming.mode}"
+            )
             RawStackResult(
                 fusedBayerBuffer = outputBuffer,
                 width = width,
@@ -273,10 +285,15 @@ class GlesRawStacker(
                 shortExposureScale = 1.0f,
             )
             GlesGpuScheduler.yieldToUiRenderer()
-            readOutput(outputBuffer)
+            val readTiming = readOutput(outputBuffer)
             outputBuffer.rewind()
             returned = true
-            PLog.i(TAG, "GLES RAW HDR stacking completed in ${System.currentTimeMillis() - startTime}ms")
+            PLog.i(
+                TAG,
+                "GLES RAW HDR stacking completed in ${System.currentTimeMillis() - startTime}ms " +
+                    "readback=${readTiming.elapsedMs}ms glRead=${readTiming.glReadMs}ms " +
+                    "copy=${readTiming.copyMs}ms alloc=${readTiming.allocMs}ms mode=${readTiming.mode}"
+            )
             RawStackResult(
                 fusedBayerBuffer = outputBuffer,
                 width = width,
@@ -386,7 +403,7 @@ class GlesRawStacker(
         accumulatorTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
         accumulatorScratchTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
         currentAccumulatorTexture = accumulatorTexture
-        outputTexture = createTexture2D(width, height, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
+        outputTexture = createTexture2D(width, height, GLES30.GL_RG8, GLES30.GL_NEAREST)
         lensShadingTexture = createLensShadingTexture()
         renderFbo = createFramebuffer()
         readbackFbo = createFramebuffer()
@@ -668,9 +685,8 @@ class GlesRawStacker(
         finishFramebufferPass("normalizeOutput")
     }
 
-    private fun readOutput(outputBuffer: ByteBuffer) {
-        val packed = LargeDirectBuffer.allocate(width.toLong() * height.toLong() * 4L, "GLES RAW packed readback")
-            ?: throw IllegalStateException("Failed to allocate GLES RAW packed readback")
+    private fun readOutput(outputBuffer: ByteBuffer): ReadOutputTiming {
+        val startTime = System.currentTimeMillis()
         try {
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, readbackFbo)
             GLES30.glFramebufferTexture2D(
@@ -684,11 +700,47 @@ class GlesRawStacker(
             checkFramebuffer("readOutput")
             GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
             GLES30.glViewport(0, 0, width, height)
+            outputBuffer.clear()
+            val directReadStart = System.currentTimeMillis()
+            GLES30.glReadPixels(0, 0, width, height, GLES30.GL_RG, GLES30.GL_UNSIGNED_BYTE, outputBuffer)
+            val directReadMs = System.currentTimeMillis() - directReadStart
+            val directReadError = GLES30.glGetError()
+            if (directReadError == GLES30.GL_NO_ERROR) {
+                outputBuffer.rewind()
+                return ReadOutputTiming(
+                    elapsedMs = System.currentTimeMillis() - startTime,
+                    glReadMs = directReadMs,
+                    copyMs = 0L,
+                    allocMs = 0L,
+                    mode = "rg8-direct",
+                )
+            }
+
+            PLog.w(
+                TAG,
+                "GLES RAW direct RG readback failed: 0x${directReadError.toString(16)}, falling back to RGBA unpack"
+            )
+            outputBuffer.clear()
+            return readOutputViaRgbaFallback(outputBuffer, startTime)
+        } finally {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        }
+    }
+
+    private fun readOutputViaRgbaFallback(outputBuffer: ByteBuffer, readbackStartTime: Long): ReadOutputTiming {
+        val allocStart = System.currentTimeMillis()
+        val packed = LargeDirectBuffer.allocate(width.toLong() * height.toLong() * 4L, "GLES RAW packed readback")
+            ?: throw IllegalStateException("Failed to allocate GLES RAW packed readback")
+        val allocMs = System.currentTimeMillis() - allocStart
+        try {
             packed.clear()
+            val glReadStart = System.currentTimeMillis()
             GLES30.glReadPixels(0, 0, width, height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, packed)
-            checkGlError("readOutput")
+            val glReadMs = System.currentTimeMillis() - glReadStart
+            checkGlError("readOutput fallback")
             packed.rewind()
             outputBuffer.clear()
+            val copyStart = System.currentTimeMillis()
             val outShorts = outputBuffer.order(ByteOrder.nativeOrder()).asShortBuffer()
             val pixelCount = width * height
             for (index in 0 until pixelCount) {
@@ -697,8 +749,14 @@ class GlesRawStacker(
                 outShorts.put(index, ((hi shl 8) or lo).toShort())
             }
             outputBuffer.rewind()
+            return ReadOutputTiming(
+                elapsedMs = System.currentTimeMillis() - readbackStartTime,
+                glReadMs = glReadMs,
+                copyMs = System.currentTimeMillis() - copyStart,
+                allocMs = allocMs,
+                mode = "rgba-fallback",
+            )
         } finally {
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
             LargeDirectBuffer.free(packed)
         }
     }
