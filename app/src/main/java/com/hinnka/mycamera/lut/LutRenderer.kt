@@ -236,8 +236,7 @@ class LutRenderer : GLSurfaceView.Renderer {
 
     // 相机 SurfaceTexture
     private var surfaceTexture: SurfaceTexture? = null
-    private var frameAvailable = false
-    private val frameSyncObject = Any()
+    private val frameAvailable = AtomicBoolean(false)
 
     // 标记 Surface 是否已创建（GL 上下文是否可用）
     private var surfaceReady = false
@@ -438,14 +437,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         cameraTextureId = GlUtils.createOESTexture()
 
         // 创建 SurfaceTexture
+        frameAvailable.set(false)
         surfaceTexture = SurfaceTexture(cameraTextureId).apply {
             setDefaultBufferSize(previewWidth, previewHeight)
             setOnFrameAvailableListener {
-                // 先设置标志（需要同步）
-                synchronized(frameSyncObject) {
-                    frameAvailable = true
-                }
-                // 在 synchronized 块外调用回调，避免潜在死锁
+                frameAvailable.set(true)
                 onRequestRender?.invoke()
             }
         }
@@ -862,20 +858,17 @@ class LutRenderer : GLSurfaceView.Renderer {
 
         // 更新 SurfaceTexture
         var hasFreshCameraFrame = false
-        synchronized(frameSyncObject) {
-            if (frameAvailable) {
-                try {
-                    surfaceTexture?.updateTexImage()
-                    surfaceTexture?.getTransformMatrix(stMatrix)
-                    hasFreshCameraFrame = true
-                } catch (e: RuntimeException) {
-                    PLog.e(
-                        TAG,
-                        "updateTexImage failed, surfaceReady=$surfaceReady, cameraTextureId=$cameraTextureId",
-                        e
-                    )
-                }
-                frameAvailable = false
+        if (frameAvailable.getAndSet(false)) {
+            try {
+                surfaceTexture?.updateTexImage()
+                surfaceTexture?.getTransformMatrix(stMatrix)
+                hasFreshCameraFrame = true
+            } catch (e: RuntimeException) {
+                PLog.e(
+                    TAG,
+                    "updateTexImage failed, surfaceReady=$surfaceReady, cameraTextureId=$cameraTextureId",
+                    e
+                )
             }
         }
 
@@ -3120,6 +3113,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         // 释放 SurfaceTexture
         surfaceTexture?.release()
         surfaceTexture = null
+        frameAvailable.set(false)
 
         // 重置状态
         surfaceReady = false
