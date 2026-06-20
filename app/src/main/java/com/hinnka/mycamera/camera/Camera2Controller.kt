@@ -4425,23 +4425,15 @@ class Camera2Controller(private val context: Context) {
 
         // 从 CameraCharacteristics 获取镜头固定信息
         var aperture: Float? = null
-        var focalLength: Float? = null
-        var focalLength35mm: Int? = null
+        var characteristicsForMetadata: CameraCharacteristics? = null
 
         try {
             val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            characteristicsForMetadata = characteristics
 
             // 光圈值（取第一个可用光圈）
             val apertures = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
             aperture = apertures?.firstOrNull()
-
-            // 焦距（取第一个可用焦距）
-            val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-            focalLengths?.firstOrNull()?.let {
-                focalLength = it * zoomRatio
-            }
-            // 计算等效35mm焦距
-            focalLength35mm = calculate35mmEquivalent(characteristics)?.times(zoomRatio)?.roundToInt()
 
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to get camera characteristics for EXIF", e)
@@ -4455,23 +4447,18 @@ class Camera2Controller(private val context: Context) {
 
         // 如果有实时的光圈/焦距，使用实时值
         result?.get(CaptureResult.LENS_APERTURE)?.let { aperture = it }
-        result?.get(CaptureResult.LENS_FOCAL_LENGTH)?.let {
-            focalLength = it * zoomRatio
-            // 重新计算35mm等效焦距
-            try {
-                val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
-                focalLength35mm = calculate35mmEquivalent(characteristics)?.times(zoomRatio)?.roundToInt()
-            } catch (e: Exception) {
-                // 忽略
-            }
-        }
+        val resolvedFocalLength = resolveCaptureFocalLength(
+            characteristics = characteristicsForMetadata,
+            captureResultFocalLength = result?.get(CaptureResult.LENS_FOCAL_LENGTH),
+            zoomRatio = zoomRatio
+        )
 
         return CaptureInfo(
             exposureTime = exposureTime,
             iso = iso,
             aperture = aperture,
-            focalLength = focalLength,
-            focalLength35mm = focalLength35mm,
+            focalLength = resolvedFocalLength.focalLength,
+            focalLength35mm = resolvedFocalLength.focalLength35mm,
             whiteBalance = whiteBalance,
             flashState = flashState,
             // 传给下游的方向永远是 NORMAL (1)
@@ -4485,6 +4472,36 @@ class Camera2Controller(private val context: Context) {
                 shouldUseP3ColorSpace() -> ColorSpace.Named.DISPLAY_P3
                 else -> ColorSpace.Named.SRGB
             }
+        )
+    }
+
+    private data class ResolvedCaptureFocalLength(
+        val focalLength: Float?,
+        val focalLength35mm: Int?
+    )
+
+    private fun resolveCaptureFocalLength(
+        characteristics: CameraCharacteristics?,
+        captureResultFocalLength: Float?,
+        zoomRatio: Float
+    ): ResolvedCaptureFocalLength {
+        val selectedCamera = _state.value.getCurrentCameraInfo()
+        val selectedCameraFocalLength = selectedCamera?.focalLength?.takeIf { it > 0f }
+        val selectedCameraFocalLength35mm = selectedCamera?.focalLength35mmEquivalent?.takeIf { it > 0f }
+        val characteristicsFocalLength = characteristics
+            ?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            ?.firstOrNull()
+            ?.takeIf { it > 0f }
+
+        val baseFocalLength = selectedCameraFocalLength
+            ?: captureResultFocalLength?.takeIf { it > 0f }
+            ?: characteristicsFocalLength
+        val baseFocalLength35mm = selectedCameraFocalLength35mm
+            ?: characteristics?.let(::calculate35mmEquivalent)?.toFloat()
+
+        return ResolvedCaptureFocalLength(
+            focalLength = baseFocalLength?.times(zoomRatio),
+            focalLength35mm = baseFocalLength35mm?.times(zoomRatio)?.roundToInt()
         )
     }
 

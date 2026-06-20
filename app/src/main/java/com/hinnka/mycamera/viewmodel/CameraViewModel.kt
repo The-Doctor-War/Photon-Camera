@@ -2360,13 +2360,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 切换到指定的镜头类型
      */
     fun switchToLens(cameraId: String) {
+        val targetCamera = state.value.availableCameras.find { it.cameraId == cameraId }
+        syncVendorCaptureSettingsToController()
         cameraController.switchToCameraId(cameraId)
+        targetCamera?.let { camera ->
+            setZoomRatioForCamera(camera.defaultVisibleZoomRatio(), camera.cameraId)
+        }
         reopenCamera(
             preserveVideoRecording = true
         )
     }
 
     fun switchToLensAndSetZoomRatio(cameraId: String, ratio: Float) {
+        syncVendorCaptureSettingsToController()
         cameraController.switchToCameraId(cameraId)
         setZoomRatioForCamera(ratio, cameraId)
         reopenCamera(
@@ -2468,8 +2474,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun setCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?) {
-        val displayIntrinsicZoomRatio = cameraInfo?.displayIntrinsicZoomRatio ?: 1.0f
+        val displayIntrinsicZoomRatio = cameraInfo?.displayIntrinsicZoomRatio?.takeIf { it > 0f } ?: 1.0f
         cameraController.setZoomRatio(ratio / displayIntrinsicZoomRatio)
+    }
+
+    private fun CameraInfo.defaultVisibleZoomRatio(): Float {
+        return displayIntrinsicZoomRatio.takeIf { it > 0f }
+            ?: intrinsicZoomRatio.takeIf { it > 0f }
+            ?: 1f
+    }
+
+    private fun syncVendorCaptureSettingsToController() {
+        val settings = vendorCaptureSettingsByLens.value
+        if (cameraController.state.value.vendorCaptureSettingsByLens != settings) {
+            cameraController.setVendorCaptureSettingsByLens(settings)
+        }
     }
 
     /**
