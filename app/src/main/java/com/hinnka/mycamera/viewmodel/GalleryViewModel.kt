@@ -33,6 +33,7 @@ import com.hinnka.mycamera.lut.exportVideoWithEffects
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.EffectParams
+import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -93,6 +94,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     val chromaNoiseReduction: StateFlow<Float> = userPreferencesRepository.userPreferences
         .map { it.chromaNoiseReduction }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+
+    val denoiseAlgorithm: StateFlow<DenoiseAlgorithm> = userPreferencesRepository.userPreferences
+        .map { it.denoiseAlgorithm }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DenoiseAlgorithm.DEFAULT)
 
     val categoryOrder: StateFlow<List<String>> = userPreferencesRepository.userPreferences
         .map { it.categoryOrder }
@@ -310,6 +315,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     var editNoiseReduction = MutableStateFlow(0f)
         private set
     var editChromaNoiseReduction = MutableStateFlow(0f)
+        private set
+    var editDenoiseAlgorithm = MutableStateFlow(DenoiseAlgorithm.DEFAULT)
         private set
     var editRawExposureCompensation = MutableStateFlow(0f)
         private set
@@ -1107,6 +1114,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editSharpening.value = m.sharpening ?: 0f
             editNoiseReduction.value = m.noiseReduction ?: 0f
             editChromaNoiseReduction.value = m.chromaNoiseReduction ?: 0f
+            editDenoiseAlgorithm.value =
+                m.denoiseAlgorithm ?: (if (m.isImported) DenoiseAlgorithm.DEFAULT else denoiseAlgorithm.value)
             editRawExposureCompensation.value = m.rawExposureCompensation ?: 0f
             editRawAutoExposure.value = m.rawAutoExposure ?: true
             editRawHighlightsAdjustment.value = m.rawHighlightsAdjustment ?: 0f
@@ -1137,6 +1146,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
         } ?: run {
             _editAiDenoiseStrength.value = 0.0f
+            editDenoiseAlgorithm.value = denoiseAlgorithm.value
             restoreCropEditState(photo, null)
         }
     }
@@ -1731,6 +1741,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editChromaNoiseReduction.value =
                     metadata.chromaNoiseReduction
                         ?: (if (metadata.isImported) 0f else chromaNoiseReduction.value)
+                editDenoiseAlgorithm.value =
+                    metadata.denoiseAlgorithm ?: (if (metadata.isImported) DenoiseAlgorithm.DEFAULT else denoiseAlgorithm.value)
                 editRawExposureCompensation.value = metadata.rawExposureCompensation ?: 0f
                 editRawAutoExposure.value = metadata.rawAutoExposure ?: true
                 editRawHighlightsAdjustment.value = metadata.rawHighlightsAdjustment ?: 0f
@@ -1755,6 +1767,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editSharpening.value = sharpening.value
                 editNoiseReduction.value = noiseReduction.value
                 editChromaNoiseReduction.value = chromaNoiseReduction.value
+                editDenoiseAlgorithm.value = denoiseAlgorithm.value
                 editRawExposureCompensation.value = 0f
                 editRawAutoExposure.value = true
                 editRawHighlightsAdjustment.value = 0f
@@ -1803,6 +1816,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editApplyEffectsToVideo.value = false
         editCropRect.value = null
         editCropAspectOption.value = CropAspectOption.Free
+        editDenoiseAlgorithm.value = DenoiseAlgorithm.DEFAULT
         editRawExposureCompensation.value = 0f
         editRawAutoExposure.value = true
         editRawHighlightsAdjustment.value = 0f
@@ -1922,6 +1936,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editChromaNoiseReduction.value = value
     }
 
+    fun setDenoiseAlgorithm(algorithm: DenoiseAlgorithm) {
+        editDenoiseAlgorithm.value = algorithm
+    }
+
     private suspend fun loadRawBaselineRecipeParams(lutId: String?): ColorRecipeParams? {
         return lutId?.let {
             contentRepository.lutManager.loadColorRecipeParams(
@@ -1938,6 +1956,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val sharpening = editSharpening.value
         val noiseReduction = editNoiseReduction.value
         val chromaNoiseReduction = editChromaNoiseReduction.value
+        val denoiseAlgorithm = editDenoiseAlgorithm.value
         val exposure = editRawExposureCompensation.value
         val autoExposure = editRawAutoExposure.value
         val highlights = editRawHighlightsAdjustment.value
@@ -1970,6 +1989,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     sharpening = sharpening,
                     noiseReduction = noiseReduction,
                     chromaNoiseReduction = chromaNoiseReduction,
+                    denoiseAlgorithm = denoiseAlgorithm,
                     rawExposureCompensation = exposure,
                     rawAutoExposure = autoExposure,
                     rawHighlightsAdjustment = highlights,
@@ -2260,7 +2280,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             photoProcessor = contentRepository.photoProcessor,
             sharpening = photoSharpening,
             noiseReduction = photoNoiseReduction,
-            chromaNoiseReduction = photoChromaNoiseReduction
+            chromaNoiseReduction = photoChromaNoiseReduction,
+            denoiseAlgorithm = metadata.denoiseAlgorithm ?: (if (metadata.isImported) DenoiseAlgorithm.DEFAULT else denoiseAlgorithm.value)
         )
     }
 
@@ -2352,6 +2373,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         sharpening = editSharpening.value,
                         noiseReduction = editNoiseReduction.value,
                         chromaNoiseReduction = editChromaNoiseReduction.value,
+                        denoiseAlgorithm = editDenoiseAlgorithm.value,
                         rawExposureCompensation = editRawExposureCompensation.value,
                         rawAutoExposure = editRawAutoExposure.value,
                         rawHighlightsAdjustment = editRawHighlightsAdjustment.value,
@@ -2673,6 +2695,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         sharpening = editSharpening.value,
                         noiseReduction = editNoiseReduction.value,
                         chromaNoiseReduction = editChromaNoiseReduction.value,
+                        denoiseAlgorithm = editDenoiseAlgorithm.value,
                         rawExposureCompensation = editRawExposureCompensation.value,
                         rawAutoExposure = editRawAutoExposure.value,
                         rawHighlightsAdjustment = editRawHighlightsAdjustment.value,

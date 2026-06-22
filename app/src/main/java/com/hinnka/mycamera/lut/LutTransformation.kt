@@ -6,6 +6,7 @@ import coil.transform.Transformation
 import android.content.Context
 import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.PhotoProcessor
+import com.hinnka.mycamera.processing.DenoiseAlgorithm
 
 /**
  * Coil 图像加载库的 LUT 转换器
@@ -14,6 +15,7 @@ import com.hinnka.mycamera.gallery.PhotoProcessor
  * @param sharpening 锐化强度
  * @param noiseReduction 降噪强度
  * @param chromaNoiseReduction 减少杂色强度
+ * @param denoiseAlgorithm 降噪算法
  */
 class PhotoTransformation(
     private val context: Context,
@@ -21,14 +23,22 @@ class PhotoTransformation(
     private val photoProcessor: PhotoProcessor,
     private val sharpening: Float = 0f,
     private val noiseReduction: Float = 0f,
-    private val chromaNoiseReduction: Float = 0f
+    private val chromaNoiseReduction: Float = 0f,
+    private val denoiseAlgorithm: DenoiseAlgorithm = DenoiseAlgorithm.DEFAULT
 ) : Transformation {
     
-    override val cacheKey: String = "photo_${metadata.hashCode()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}"
+    override val cacheKey: String =
+        "photo_${metadata.hashCode()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}_d${denoiseAlgorithm.persistedName}"
 
     override suspend fun transform(input: Bitmap, size: Size): Bitmap {
         return photoProcessor.processBitmap(
-            context, null, input, metadata, sharpening, noiseReduction, chromaNoiseReduction
+            context,
+            null,
+            input,
+            metadata.copy(denoiseAlgorithm = metadata.denoiseAlgorithm ?: denoiseAlgorithm),
+            sharpening,
+            noiseReduction,
+            chromaNoiseReduction
         )
     }
 }

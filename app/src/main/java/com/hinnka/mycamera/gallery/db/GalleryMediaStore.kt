@@ -13,6 +13,7 @@ import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.MediaType
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
+import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.utils.PLog
@@ -201,6 +202,7 @@ object GalleryMediaStore {
             sharpening = metadata.sharpening,
             noiseReduction = metadata.noiseReduction,
             chromaNoiseReduction = metadata.chromaNoiseReduction,
+            denoiseAlgorithm = metadata.denoiseAlgorithm?.persistedName,
             rawDenoiseValue = metadata.rawDenoiseValue,
             rawExposureCompensation = metadata.rawExposureCompensation,
             rawAutoExposure = metadata.rawAutoExposure,
@@ -367,6 +369,7 @@ object GalleryMediaStore {
             sharpening = sharpening,
             noiseReduction = noiseReduction,
             chromaNoiseReduction = chromaNoiseReduction,
+            denoiseAlgorithm = denoiseAlgorithm?.let(DenoiseAlgorithm::fromPersistedName),
             rawDenoiseValue = rawDenoiseValue,
             rawExposureCompensation = rawExposureCompensation,
             rawAutoExposure = rawAutoExposure,

@@ -28,6 +28,7 @@ import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.lut.applyEffectsToVideoFile
 import com.hinnka.mycamera.model.SafeImage
+import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
@@ -1575,6 +1576,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
+                denoiseAlgorithm = updatedMetadata.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                 rawDcpId = updatedMetadata.rawDcpId,
                 rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
@@ -2420,6 +2422,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
+                denoiseAlgorithm = updatedMetadata.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                 rawDcpId = updatedMetadata.rawDcpId,
                 rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
@@ -2797,6 +2800,7 @@ object GalleryManager {
             sharpeningValue = 0.4f,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
+            denoiseAlgorithm = updatedMetadata.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
             rawDcpId = updatedMetadata.rawDcpId,
             rawRenderingEngine = updatedMetadata.rawRenderingEngine,
             rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
@@ -3959,6 +3963,7 @@ object GalleryManager {
                         sharpeningValue = 0.4f,
                         denoiseValue = rawNoiseReduction,
                         chromaDenoiseValue = rawChromaNoiseReduction,
+                        denoiseAlgorithm = updatedMetadata.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                         rawDcpId = updatedMetadata.rawDcpId,
                         rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                         rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
@@ -4115,6 +4120,7 @@ object GalleryManager {
                     sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
                     denoiseValue = rawNoiseReduction,
                     chromaDenoiseValue = rawChromaNoiseReduction,
+                    denoiseAlgorithm = updatedMetadata?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                     rawDcpId = updatedMetadata?.rawDcpId,
                     rawRenderingEngine = updatedMetadata?.rawRenderingEngine ?: MediaMetadata().rawRenderingEngine,
                     rawToneMappingParameters = updatedMetadata?.rawToneMappingParameters ?: MediaMetadata().rawToneMappingParameters,
