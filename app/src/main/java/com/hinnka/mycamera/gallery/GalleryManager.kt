@@ -2658,8 +2658,15 @@ object GalleryManager {
                             "outputDomain=short, normalReference=${normalReferenceCandidate.exposureProduct}, " +
                             "short=${shortCandidate.exposureProduct}"
                 )
-                val rawHdrProfileGainTableMap =
-                    DngProfileGainTableMap.forHdrBaselineExposure(rawHdrBaselineExposureEv)
+                val rawHdrProfileGainTableMap = DngProfileGainTableMap.forHdrRawBuffer(
+                    rawBuffer = fusedBayerBuffer,
+                    width = stackResult.width,
+                    height = stackResult.height,
+                    cfaPattern = stackCfaPattern,
+                    baselineExposureEv = rawHdrBaselineExposureEv,
+                    blackLevel = stackResult.blackLevel,
+                    whiteLevel = if (stackResult.isNormalizedSensorData) 65535 else rawMetadata.whiteLevel.toInt(),
+                )
                 rawHdrProfileGainTableMap?.let {
                     PLog.d(
                         TAG,

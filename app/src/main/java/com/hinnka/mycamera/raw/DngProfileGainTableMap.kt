@@ -6,8 +6,6 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.max
-import kotlin.math.min
 
 data class DngProfileGainTableMap(
     val mapPointsV: Int,
@@ -109,103 +107,35 @@ data class DngProfileGainTableMap(
         private const val DATA_TYPE_FLOAT32 = 3
         private const val MIN_GAMMA = 0.25f
         private const val MAX_GAMMA = 4.0f
-        private const val HDR_PGTM_MIN_BASELINE_EV = 0.05f
-        private const val HDR_PGTM_MAX_BASELINE_EV = 8f
-        private const val HDR_PGTM_MIN_TABLE_POINTS = 64
-        private const val HDR_PGTM_MAX_TABLE_POINTS = 4096
+        private const val HDR_PGTM_DEFAULT_TABLE_POINTS = 257
 
         fun forHdrBaselineExposure(
             baselineExposureEv: Float,
-            tablePointCount: Int = 256,
-        ): DngProfileGainTableMap? {
-            if (!baselineExposureEv.isFinite() || baselineExposureEv <= HDR_PGTM_MIN_BASELINE_EV) {
-                return null
-            }
-            val safeBaselineEv = baselineExposureEv.coerceIn(0f, HDR_PGTM_MAX_BASELINE_EV)
-            val safePointCount = tablePointCount.coerceIn(
-                HDR_PGTM_MIN_TABLE_POINTS,
-                HDR_PGTM_MAX_TABLE_POINTS
-            )
-            val gains = buildMonotonicHdrProfileGainTable(
-                baselineExposureEv = safeBaselineEv,
-                pointCount = safePointCount
-            )
-            return DngProfileGainTableMap(
-                mapPointsV = 1,
-                mapPointsH = 1,
-                mapSpacingV = 1.0,
-                mapSpacingH = 1.0,
-                mapOriginV = 0.0,
-                mapOriginH = 0.0,
-                mapPointsN = safePointCount,
-                mapInputWeights = floatArrayOf(0.1f, 0.1f, 0.1f, 0f, 0.7f),
-                gamma = 1f,
-                gains = gains,
-                sourceTag = TAG_PROFILE_GAIN_TABLE_MAP2
-            )
-        }
+            tablePointCount: Int = HDR_PGTM_DEFAULT_TABLE_POINTS,
+        ): DngProfileGainTableMap? = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(
+            baselineExposureEv = baselineExposureEv,
+            tablePointCount = tablePointCount
+        )
 
-        private fun buildMonotonicHdrProfileGainTable(
+        fun forHdrRawBuffer(
+            rawBuffer: ByteBuffer,
+            width: Int,
+            height: Int,
+            cfaPattern: Int,
             baselineExposureEv: Float,
-            pointCount: Int,
-        ): FloatArray {
-            val compression = smoothStep(0.5f, 4.0f, baselineExposureEv)
-            val knee = lerp(0.92f, 0.72f, compression)
-            val whiteOutput = max(
-                lerp(0.985f, 0.86f, compression),
-                knee + (1f - knee) * 0.35f
-            )
-            val whiteSlope = lerp(0.95f, 0.45f, compression)
-            val gains = FloatArray(pointCount)
-            var previousOutput = 0f
-            for (index in 0 until pointCount) {
-                val input = tableInputForIndex(index, pointCount)
-                val targetOutput = monotonicShoulderOutput(
-                    input = input,
-                    knee = knee,
-                    whiteOutput = whiteOutput,
-                    whiteSlope = whiteSlope
-                ).coerceAtMost(input)
-                val output = max(targetOutput, previousOutput.coerceAtMost(input))
-                gains[index] = if (input > 1e-6f) {
-                    (output / input).coerceIn(0f, 1f)
-                } else {
-                    1f
-                }
-                previousOutput = output
-            }
-            return gains
-        }
-
-        private fun tableInputForIndex(index: Int, pointCount: Int): Float {
-            if (pointCount <= 1) return 0f
-            return if (index == pointCount - 1) {
-                1f
-            } else {
-                index.toFloat() / pointCount.toFloat()
-            }
-        }
-
-        private fun monotonicShoulderOutput(
-            input: Float,
-            knee: Float,
-            whiteOutput: Float,
-            whiteSlope: Float,
-        ): Float {
-            if (input <= knee) return input
-            val range = max(1f - knee, 1e-6f)
-            val t = ((input - knee) / range).coerceIn(0f, 1f)
-            val t2 = t * t
-            val t3 = t2 * t
-            val h00 = 2f * t3 - 3f * t2 + 1f
-            val h10 = t3 - 2f * t2 + t
-            val h01 = -2f * t3 + 3f * t2
-            val h11 = t3 - t2
-            return h00 * knee +
-                h10 * range +
-                h01 * whiteOutput +
-                h11 * range * whiteSlope
-        }
+            blackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
+            whiteLevel: Int = 65535,
+            tablePointCount: Int = HDR_PGTM_DEFAULT_TABLE_POINTS,
+        ): DngProfileGainTableMap? = DngHdrProfileGainTableGenerator.forHdrRawBuffer(
+            rawBuffer = rawBuffer,
+            width = width,
+            height = height,
+            cfaPattern = cfaPattern,
+            baselineExposureEv = baselineExposureEv,
+            blackLevel = blackLevel,
+            whiteLevel = whiteLevel,
+            tablePointCount = tablePointCount
+        )
 
         fun readFrom(file: File): DngProfileGainTableMap? {
             if (!file.exists() || file.length() < 16L) return null
@@ -448,14 +378,6 @@ data class DngProfileGainTableMap(
             return total.takeIf { it in 1L..Int.MAX_VALUE.toLong() }?.toInt()
         }
 
-        private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
-            val t = ((x - edge0) / max(edge1 - edge0, 1e-6f)).coerceIn(0f, 1f)
-            return t * t * (3f - 2f * t)
-        }
-
-        private fun lerp(a: Float, b: Float, t: Float): Float {
-            return a + (b - a) * min(max(t, 0f), 1f)
-        }
     }
 
     private data class TiffEntry(
@@ -464,4 +386,5 @@ data class DngProfileGainTableMap(
         val count: Long,
         val inlineOrOffset: ByteArray,
     )
+
 }
