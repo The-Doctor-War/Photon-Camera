@@ -84,12 +84,19 @@ object CameraUtils {
     /**
      * 获取最佳拍照尺寸
      */
-    fun getBestCaptureSize(context: Context, cameraId: String, aspectRatio: AspectRatio): Size {
+    fun getBestCaptureSize(
+        context: Context,
+        cameraId: String,
+        aspectRatio: AspectRatio,
+        format: Int = ImageFormat.YUV_420_888
+    ): Size {
         return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = map?.getOutputSizes(ImageFormat.YUV_420_888) ?: arrayOf(Size(1920, 1080))
+            val sizes = map?.getOutputSizes(format)
+                ?: map?.getOutputSizes(ImageFormat.YUV_420_888)
+                ?: arrayOf(Size(1920, 1080))
             val sensorRatio = aspectRatio.getValue(true)
 
             // 寻找比例最匹配传感器原生比例
