@@ -139,7 +139,8 @@ class RawDemosaicProcessor {
             exposureCompensation = baseMetadata?.exposureCompensation ?: 0f,
             aeMode = baseMetadata?.aeMode ?: 1,
             afRegions = baseMetadata?.afRegions,
-            frameCount = baseMetadata?.frameCount ?: 1
+            frameCount = baseMetadata?.frameCount ?: 1,
+            profileGainTableMap = baseMetadata?.profileGainTableMap
         )
     }
 
@@ -175,20 +176,6 @@ class RawDemosaicProcessor {
         private const val RAW_AE_HISTOGRAM_LOG_MAX = 4f
         private const val RAW_AE_HISTOGRAM_BINDING = 0
         private const val RAW_AE_BASE_STATS_BINDING = 1
-        private const val RAW_HDR_LOCAL_TONE_IMAGE_BINDING = 0
-        private const val RAW_HDR_LOCAL_TONE_BIN_COUNT = 128
-        private const val RAW_HDR_LOCAL_TONE_GRID_MIN_X = 8
-        private const val RAW_HDR_LOCAL_TONE_GRID_MIN_Y = 6
-        private const val RAW_HDR_LOCAL_TONE_GRID_MAX_X = 64
-        private const val RAW_HDR_LOCAL_TONE_GRID_MAX_Y = 48
-        private const val RAW_HDR_LOCAL_TONE_TARGET_TILE_PX = 72
-        private const val RAW_HDR_LOCAL_TONE_LOG_MIN = -10f
-        private const val RAW_HDR_LOCAL_TONE_LOG_MAX = 5f
-        private const val RAW_HDR_LOCAL_TONE_MIN_BASELINE_EV = 0.75f
-        private const val RAW_HDR_LOCAL_TONE_MIN_DYNAMIC_RANGE_EV = 4.5f
-        private const val RAW_HDR_LOCAL_TONE_TARGET_MID = 0.18f
-        private const val RAW_HDR_LOCAL_TONE_TARGET_LOW = 0.014f
-        private const val RAW_HDR_LOCAL_TONE_TARGET_HIGH = 0.78f
         private const val FILMIC_GREY_SOURCE = 0.1845f
         private const val FILMIC_OUTPUT_POWER = 3.614815775f
         private const val FILMIC_DISPLAY_BLACK = 0.0001517634f
@@ -252,11 +239,10 @@ class RawDemosaicProcessor {
     private var quadWriteOutputProgram = 0
     private var linearRcdProgram = 0
     private var rawAeBaseProgram = 0
-    private var rawHdrLocalToneBaseProgram = 0
-    private var rawHdrLocalToneCurveProgram = 0
-    private var rawHdrLocalToneApplyProgram = 0
 
     private var rawTextureId = 0
+    private var profileGainTableTextureId = 0
+    private var profileGainTableTextureSource: DngProfileGainTableMap? = null
 
     private var demosaicFramebufferId = 0
     private var demosaicTextureId = 0
@@ -389,30 +375,6 @@ class RawDemosaicProcessor {
         val m3: FloatArray,
         val m4: FloatArray,
         val m5: FloatArray
-    )
-
-    private data class RawHdrLocalToneGrid(
-        val gridX: Int,
-        val gridY: Int,
-        val binCount: Int
-    )
-
-    private data class RawHdrLocalToneParams(
-        val grid: RawHdrLocalToneGrid,
-        val exposureScale: Float,
-        val baseCompression: Float,
-        val shadowCompressionBias: Float,
-        val detailScale: Float,
-        val maxLiftEv: Float,
-        val maxPullEv: Float,
-        val strength: Float,
-        val dynamicRangeEv: Float,
-        val compressionAmount: Float
-    )
-
-    private data class RawHdrLocalToneResult(
-        val textureId: Int,
-        val applied: Boolean
     )
 
     private fun SceneStats.toRenderPlan(): RawRenderPlan {
@@ -751,6 +713,7 @@ class RawDemosaicProcessor {
         val profileWorkingColorSpace = ColorSpace.ProPhoto
 
         if (dngFile != null) {
+            val profileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)
             val dngRawData = processDngNative(
                 dngFile.absolutePath,
                 profileWorkingColorSpace.xr, profileWorkingColorSpace.yr,
@@ -782,7 +745,14 @@ class RawDemosaicProcessor {
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawCfaCorrectionMode = rawCfaCorrectionMode
-            )
+            ).copy(profileGainTableMap = profileGainTableMap ?: actualMetadata?.profileGainTableMap)
+            profileGainTableMap?.let {
+                PLog.d(
+                    TAG,
+                    "DNG ProfileGainTableMap loaded: tag=${it.sourceTag} " +
+                        "grid=${it.mapPointsH}x${it.mapPointsV} points=${it.mapPointsN} gamma=${it.gamma}"
+                )
+            }
             actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
             onMetadata?.invoke(actualMetadata)
         }
@@ -1151,6 +1121,7 @@ class RawDemosaicProcessor {
             }
             }
 
+            val hasProfileGainTableMap = actualMetadata.profileGainTableMap?.isValid == true
             // 复用 RAW AE 的线性 metering 分布统计，AE 与 Shadows/Highlights 使用同一份结果。
             val meteringResult = resolveRawAutoExposureEv(
                 context = context,
@@ -1161,7 +1132,7 @@ class RawDemosaicProcessor {
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 applyDcpBaselineExposureOffset = false,
-                applyDngBaselineExposure = false,
+                applyDngBaselineExposure = hasProfileGainTableMap,
                 meteringCompensationEv = colorEngine.meteringCompensationEv,
                 useDepthWeighting = rawAutoExposure
             )
@@ -1184,9 +1155,15 @@ class RawDemosaicProcessor {
                 profileExposureCompensation = profileExposureCompensation,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
+                applyDngBaselineExposure = !hasProfileGainTableMap,
                 useRamp = useDcpToneCurve
             )
-            val linearExposureGain = 2.0f.pow(profileExposureUniforms.exposureEv)
+            val profileLinearExposureGain = 2.0f.pow(profileExposureUniforms.exposureEv)
+            val linearExposureGain = if (hasProfileGainTableMap) {
+                profileLinearExposureGain * exactDngBaselineExposureGain(actualMetadata)
+            } else {
+                profileLinearExposureGain
+            }
             val shadowsHighlightsParams = ShadowsHighlightsParams(
                 highlights = rawHighlightsAdjustment,
                 shadows = rawShadowsAdjustment,
@@ -1214,11 +1191,12 @@ class RawDemosaicProcessor {
                     "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
                     "profileExposureEv=${profileExposureUniforms.exposureEv} " +
                     "dngBaselineExposure=${actualMetadata.baselineExposure} " +
+                    "dngBaselineExposureInLinear=$hasProfileGainTableMap " +
                     "dcpBaselineExposureOffsetApplied=$applyDcpBaselineExposureOffset"
             )
 
             // 运行 linearRcdProgram 将相机矩阵应用在已解马赛克的浮点 RCD 图像上。
-            // 曝光按 dng_sdk 顺序在后续 ProPhoto profile 阶段通过 ramp/tone 处理。
+            // 有 PGTM 时，DNG BaselineExposure 按规范在 PGTM 之前于线性 ProPhoto/RIMM 阶段应用。
             checkGlError("Before LinearRcdPass")
 
             renderLinearRcdPass(
@@ -1233,7 +1211,7 @@ class RawDemosaicProcessor {
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 applyDcpBaselineExposureOffset = false,
-                applyDngBaselineExposure = false,
+                applyDngBaselineExposure = hasProfileGainTableMap,
                 label = "LinearRcdPass"
             )
 
@@ -1323,26 +1301,12 @@ class RawDemosaicProcessor {
                 null
             }
 
-            val localToneStart = System.currentTimeMillis()
-            val rawHdrLocalToneResult = renderRawHdrLocalToneIfNeeded(
-                metadata = actualMetadata,
-                inputTextureId = outputTexture,
-                width = actualWidth,
-                height = actualHeight,
-                profileExposureUniforms = profileExposureUniforms,
-                meteringResult = meteringResult
-            )
-            if (rawHdrLocalToneResult.applied) {
-                PLog.d(TAG, "RAW HDR local tone took: ${System.currentTimeMillis() - localToneStart}ms")
-            }
-            val combinedInputTexture = rawHdrLocalToneResult.textureId
-
             // 5. 第二步：Combined Pass (HDR Linear -> LDR sRGB + LUT)
             setupCombinedFramebuffer(actualWidth, actualHeight)
             val combinedStart = System.currentTimeMillis()
             val combinedRendered = renderCombinedPass(
                 metadata = actualMetadata,
-                inputTextureId = combinedInputTexture,
+                inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 useDcpToneCurve = useDcpToneCurve,
                 profileExposureUniforms = profileExposureUniforms,
@@ -1652,8 +1616,6 @@ class RawDemosaicProcessor {
             GLES30.glDeleteShader(fShaderPass)
         }
 
-        initRawHdrLocalTonePrograms(vShader)
-
         // 2.8 RCD Programs
         initRcdPrograms(vShader)
 
@@ -1661,45 +1623,6 @@ class RawDemosaicProcessor {
         PLog.d(
             TAG,
             "Shader programs created: passthrough=$passthroughProgram"
-        )
-    }
-
-    private fun initRawHdrLocalTonePrograms(vShader: Int) {
-        rawHdrLocalToneBaseProgram = compileComputeProgram(
-            RawHdrLocalToneShaders.BASE_GRID_COMPUTE,
-            "RAW_HDR_LOCAL_TONE_BASE"
-        )
-        rawHdrLocalToneCurveProgram = compileComputeProgram(
-            RawHdrLocalToneShaders.CURVE_TABLE_COMPUTE,
-            "RAW_HDR_LOCAL_TONE_CURVE"
-        )
-
-        val fShaderApply = compileShader(
-            GLES30.GL_FRAGMENT_SHADER,
-            RawHdrLocalToneShaders.APPLY_FRAGMENT_SHADER,
-            "rawHdrLocalToneApplyFragment"
-        )
-        if (vShader != 0 && fShaderApply != 0) {
-            rawHdrLocalToneApplyProgram = GLES30.glCreateProgram()
-            GLES30.glAttachShader(rawHdrLocalToneApplyProgram, vShader)
-            GLES30.glAttachShader(rawHdrLocalToneApplyProgram, fShaderApply)
-            val linkStart = System.currentTimeMillis()
-            GLES30.glLinkProgram(rawHdrLocalToneApplyProgram)
-            if (!logProgramLinkResult(
-                    rawHdrLocalToneApplyProgram,
-                    "rawHdrLocalToneApplyProgram",
-                    linkStart
-                )
-            ) {
-                rawHdrLocalToneApplyProgram = 0
-            }
-            GLES30.glDeleteShader(fShaderApply)
-        }
-
-        PLog.d(
-            TAG,
-            "RAW HDR local tone programs: base=$rawHdrLocalToneBaseProgram " +
-                "curve=$rawHdrLocalToneCurveProgram apply=$rawHdrLocalToneApplyProgram"
         )
     }
 
@@ -1750,18 +1673,68 @@ class RawDemosaicProcessor {
         out vec4 fragColor;
         
         uniform sampler2D uDemosaickedTexture;
+        uniform sampler2D uProfileGainTableMap;
         uniform mat3 uColorCorrectionMatrix;
         uniform float uExposureGain;
         uniform float uBlackPoint;
         uniform float uWhitePoint;
+        uniform int uProfileGainEnabled;
+        uniform ivec3 uProfileGainTableSize;
+        uniform vec4 uProfileGainGrid;
+        uniform vec4 uProfileGainWeights0;
+        uniform float uProfileGainWeightMax;
+        uniform float uProfileGainGamma;
+        uniform float uProfileGainBaselineGain;
+
+        float profileGainTableValue(int tableX, int tableY, float tableIndex) {
+            int pointCount = max(uProfileGainTableSize.z, 1);
+            float clampedIndex = clamp(tableIndex, 0.0, float(pointCount - 1));
+            int i0 = int(floor(clampedIndex));
+            int i1 = min(i0 + 1, pointCount - 1);
+            float t = clampedIndex - float(i0);
+            int baseX = tableX * pointCount;
+            float g0 = texelFetch(uProfileGainTableMap, ivec2(baseX + i0, tableY), 0).r;
+            float g1 = texelFetch(uProfileGainTableMap, ivec2(baseX + i1, tableY), 0).r;
+            return mix(g0, g1, t);
+        }
+
+        float profileGain(vec3 rgb) {
+            if (uProfileGainEnabled == 0) {
+                return 1.0;
+            }
+            int mapH = max(uProfileGainTableSize.x, 1);
+            int mapV = max(uProfileGainTableSize.y, 1);
+            vec2 origin = uProfileGainGrid.xy;
+            vec2 spacing = max(uProfileGainGrid.zw, vec2(1e-8));
+            vec2 mapPosition = (vTexCoord - origin) / spacing;
+            mapPosition = clamp(mapPosition, vec2(0.0), vec2(float(mapH - 1), float(mapV - 1)));
+            int x0 = int(floor(mapPosition.x));
+            int y0 = int(floor(mapPosition.y));
+            int x1 = min(x0 + 1, mapH - 1);
+            int y1 = min(y0 + 1, mapV - 1);
+            float tx = mapPosition.x - float(x0);
+            float ty = mapPosition.y - float(y0);
+            float rgbMin = min(rgb.r, min(rgb.g, rgb.b));
+            float rgbMax = max(rgb.r, max(rgb.g, rgb.b));
+            float weightedInput = dot(vec4(rgb, rgbMin), uProfileGainWeights0) +
+                rgbMax * uProfileGainWeightMax;
+            float tableInput = pow(clamp(weightedInput, 0.0, 1.0), uProfileGainGamma);
+            float tableIndex = tableInput * float(max(uProfileGainTableSize.z, 1));
+            float g00 = profileGainTableValue(x0, y0, tableIndex);
+            float g10 = profileGainTableValue(x1, y0, tableIndex);
+            float g01 = profileGainTableValue(x0, y1, tableIndex);
+            float g11 = profileGainTableValue(x1, y1, tableIndex);
+            return max(mix(mix(g00, g10, tx), mix(g01, g11, tx), ty), 0.0);
+        }
         
         void main() {
             vec3 rgb = texture(uDemosaickedTexture, vTexCoord).rgb;
             float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
             float whitePoint = max(uWhitePoint, blackPoint + 0.01);
             rgb = max((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), vec3(0.0));
-            // 应用色彩转换 CCM 矩阵和曝光值增益
-            rgb = uColorCorrectionMatrix * rgb * uExposureGain;
+            rgb = uColorCorrectionMatrix * rgb;
+            rgb *= profileGain(rgb * uProfileGainBaselineGain);
+            rgb *= uExposureGain;
             fragColor = vec4(rgb, 1.0);
         }
     """.trimIndent()
@@ -3777,373 +3750,6 @@ class RawDemosaicProcessor {
         return true
     }
 
-    private fun renderRawHdrLocalToneIfNeeded(
-        metadata: RawMetadata,
-        inputTextureId: Int,
-        width: Int,
-        height: Int,
-        profileExposureUniforms: ProfileExposureUniforms,
-        meteringResult: MeteringSystem.MeteringResult
-    ): RawHdrLocalToneResult {
-        val params = buildRawHdrLocalToneParams(
-            metadata = metadata,
-            width = width,
-            height = height,
-            profileExposureUniforms = profileExposureUniforms,
-            meteringResult = meteringResult
-        ) ?: return RawHdrLocalToneResult(inputTextureId, applied = false)
-
-        if (rawHdrLocalToneBaseProgram == 0 ||
-            rawHdrLocalToneCurveProgram == 0 ||
-            rawHdrLocalToneApplyProgram == 0 ||
-            linearOutputTextureId == 0 ||
-            linearOutputFramebufferId == 0
-        ) {
-            PLog.w(
-                TAG,
-                "RAW HDR local tone skipped: programs/base=$rawHdrLocalToneBaseProgram " +
-                    "curve=$rawHdrLocalToneCurveProgram apply=$rawHdrLocalToneApplyProgram " +
-                    "linearOutputTex=$linearOutputTextureId fbo=$linearOutputFramebufferId"
-            )
-            return RawHdrLocalToneResult(inputTextureId, applied = false)
-        }
-
-        val baseTextureId = createRawHdrLocalToneTexture(
-            width = params.grid.gridX,
-            height = params.grid.gridY,
-            label = "base"
-        )
-        val gainTextureId = createRawHdrLocalToneTexture(
-            width = params.grid.gridX * params.grid.binCount,
-            height = params.grid.gridY,
-            label = "gainTable"
-        )
-        if (baseTextureId == 0 || gainTextureId == 0) {
-            if (baseTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(baseTextureId), 0)
-            if (gainTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(gainTextureId), 0)
-            return RawHdrLocalToneResult(inputTextureId, applied = false)
-        }
-
-        return try {
-            dispatchRawHdrLocalToneBaseGrid(
-                inputTextureId = inputTextureId,
-                baseTextureId = baseTextureId,
-                width = width,
-                height = height,
-                params = params
-            )
-            dispatchRawHdrLocalToneCurveTable(
-                baseTextureId = baseTextureId,
-                gainTextureId = gainTextureId,
-                params = params
-            )
-            renderRawHdrLocalToneApply(
-                inputTextureId = inputTextureId,
-                gainTextureId = gainTextureId,
-                width = width,
-                height = height,
-                params = params
-            )
-            PLog.d(
-                TAG,
-                "RAW HDR local tone applied: grid=${params.grid.gridX}x${params.grid.gridY} " +
-                    "bins=${params.grid.binCount} exposureScale=${params.exposureScale} " +
-                    "dynamicRangeEv=${params.dynamicRangeEv} compression=${params.compressionAmount} " +
-                    "baseCompression=${params.baseCompression} detailScale=${params.detailScale} " +
-                    "maxLift=${params.maxLiftEv} maxPull=${params.maxPullEv} strength=${params.strength}"
-            )
-            RawHdrLocalToneResult(linearOutputTextureId, applied = true)
-        } catch (e: Exception) {
-            PLog.e(TAG, "RAW HDR local tone failed; using original linear texture", e)
-            RawHdrLocalToneResult(inputTextureId, applied = false)
-        } finally {
-            GLES30.glDeleteTextures(2, intArrayOf(baseTextureId, gainTextureId), 0)
-        }
-    }
-
-    private fun buildRawHdrLocalToneParams(
-        metadata: RawMetadata,
-        width: Int,
-        height: Int,
-        profileExposureUniforms: ProfileExposureUniforms,
-        meteringResult: MeteringSystem.MeteringResult
-    ): RawHdrLocalToneParams? {
-        val baselineEv = metadata.baselineExposure.takeIf { it.isFinite() } ?: 0f
-        if (baselineEv < RAW_HDR_LOCAL_TONE_MIN_BASELINE_EV) {
-            return null
-        }
-        val dynamicRangeEv = meteringResult.dynamicRangeGap
-            .takeIf { it.isFinite() && it > 0f }
-            ?: return null
-        if (dynamicRangeEv < RAW_HDR_LOCAL_TONE_MIN_DYNAMIC_RANGE_EV) {
-            PLog.d(
-                TAG,
-                "RAW HDR local tone skipped: dynamicRangeEv=$dynamicRangeEv " +
-                    "baselineEv=$baselineEv"
-            )
-            return null
-        }
-
-        val compressionAmount = smoothStepScalar(5.0f, 11.0f, dynamicRangeEv)
-        val baseCompression = lerpScalar(0.78f, 0.4f, compressionAmount)
-        val shadowCompressionBias = lerpScalar(0.6f, 0.85f, compressionAmount)
-        val detailScale = lerpScalar(0.96f, 0.84f, compressionAmount)
-        val maxLiftEv = lerpScalar(0.95f, 1.80f, compressionAmount)
-        val maxPullEv = lerpScalar(1.2f, 2.80f, compressionAmount)
-        val strength = lerpScalar(0.72f, 1.0f, compressionAmount)
-
-        return RawHdrLocalToneParams(
-            grid = chooseRawHdrLocalToneGrid(width, height),
-            exposureScale = profileExposureUniforms.linearGain.coerceIn(1e-4f, 4096f),
-            baseCompression = baseCompression,
-            shadowCompressionBias = shadowCompressionBias,
-            detailScale = detailScale,
-            maxLiftEv = maxLiftEv,
-            maxPullEv = maxPullEv,
-            strength = strength,
-            dynamicRangeEv = dynamicRangeEv,
-            compressionAmount = compressionAmount
-        )
-    }
-
-    private fun chooseRawHdrLocalToneGrid(width: Int, height: Int): RawHdrLocalToneGrid {
-        var gridX = ((width + RAW_HDR_LOCAL_TONE_TARGET_TILE_PX - 1) /
-            RAW_HDR_LOCAL_TONE_TARGET_TILE_PX)
-            .coerceIn(RAW_HDR_LOCAL_TONE_GRID_MIN_X, RAW_HDR_LOCAL_TONE_GRID_MAX_X)
-        while (gridX * RAW_HDR_LOCAL_TONE_BIN_COUNT > maxTextureSize &&
-            gridX > RAW_HDR_LOCAL_TONE_GRID_MIN_X
-        ) {
-            gridX--
-        }
-        val aspectGridY = ((gridX * height + max(1, width / 2)) / max(1, width))
-        val gridY = aspectGridY.coerceIn(
-            RAW_HDR_LOCAL_TONE_GRID_MIN_Y,
-            RAW_HDR_LOCAL_TONE_GRID_MAX_Y
-        )
-        return RawHdrLocalToneGrid(
-            gridX = gridX,
-            gridY = gridY,
-            binCount = RAW_HDR_LOCAL_TONE_BIN_COUNT
-        )
-    }
-
-    private fun createRawHdrLocalToneTexture(width: Int, height: Int, label: String): Int {
-        if (width <= 0 || height <= 0 || width > maxTextureSize || height > maxTextureSize) {
-            PLog.e(TAG, "RAW HDR local tone $label texture invalid size ${width}x$height")
-            return 0
-        }
-        val textures = IntArray(1)
-        GLES30.glGenTextures(1, textures, 0)
-        val textureId = textures[0]
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
-        GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, width, height)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
-        checkGlError("createRawHdrLocalToneTexture $label")
-        return textureId
-    }
-
-    private fun dispatchRawHdrLocalToneBaseGrid(
-        inputTextureId: Int,
-        baseTextureId: Int,
-        width: Int,
-        height: Int,
-        params: RawHdrLocalToneParams
-    ) {
-        GLES31.glUseProgram(rawHdrLocalToneBaseProgram)
-        bindComputeSampler(rawHdrLocalToneBaseProgram, "uInputTexture", 0, inputTextureId)
-        GLES31.glUniform2i(
-            GLES31.glGetUniformLocation(rawHdrLocalToneBaseProgram, "uImageSize"),
-            width,
-            height
-        )
-        GLES31.glUniform2i(
-            GLES31.glGetUniformLocation(rawHdrLocalToneBaseProgram, "uGridSize"),
-            params.grid.gridX,
-            params.grid.gridY
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneBaseProgram, "uExposureScale"),
-            params.exposureScale
-        )
-        GLES31.glBindImageTexture(
-            RAW_HDR_LOCAL_TONE_IMAGE_BINDING,
-            baseTextureId,
-            0,
-            false,
-            0,
-            GLES31.GL_WRITE_ONLY,
-            GLES31.GL_RGBA16F
-        )
-        GLES31.glDispatchCompute(
-            roundUp(params.grid.gridX, 8) / 8,
-            roundUp(params.grid.gridY, 8) / 8,
-            1
-        )
-        GLES31.glMemoryBarrier(
-            GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
-        )
-        GLES31.glBindImageTexture(
-            RAW_HDR_LOCAL_TONE_IMAGE_BINDING,
-            0,
-            0,
-            false,
-            0,
-            GLES31.GL_WRITE_ONLY,
-            GLES31.GL_RGBA16F
-        )
-        checkGlError("RAW HDR local tone base grid")
-    }
-
-    private fun dispatchRawHdrLocalToneCurveTable(
-        baseTextureId: Int,
-        gainTextureId: Int,
-        params: RawHdrLocalToneParams
-    ) {
-        val tableWidth = params.grid.gridX * params.grid.binCount
-        GLES31.glUseProgram(rawHdrLocalToneCurveProgram)
-        bindComputeSampler(rawHdrLocalToneCurveProgram, "uBaseGrid", 0, baseTextureId)
-        GLES31.glUniform2i(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uGridSize"),
-            params.grid.gridX,
-            params.grid.gridY
-        )
-        GLES31.glUniform1i(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uBinCount"),
-            params.grid.binCount
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uLogMin"),
-            RAW_HDR_LOCAL_TONE_LOG_MIN
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uLogMax"),
-            RAW_HDR_LOCAL_TONE_LOG_MAX
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uTargetMidLog"),
-            safeLog2(RAW_HDR_LOCAL_TONE_TARGET_MID)
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uTargetLowLog"),
-            safeLog2(RAW_HDR_LOCAL_TONE_TARGET_LOW)
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uTargetHighLog"),
-            safeLog2(RAW_HDR_LOCAL_TONE_TARGET_HIGH)
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uBaseCompression"),
-            params.baseCompression
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uShadowCompressionBias"),
-            params.shadowCompressionBias
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uDetailScale"),
-            params.detailScale
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uMaxLiftEv"),
-            params.maxLiftEv
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(rawHdrLocalToneCurveProgram, "uMaxPullEv"),
-            params.maxPullEv
-        )
-        GLES31.glBindImageTexture(
-            RAW_HDR_LOCAL_TONE_IMAGE_BINDING,
-            gainTextureId,
-            0,
-            false,
-            0,
-            GLES31.GL_WRITE_ONLY,
-            GLES31.GL_RGBA16F
-        )
-        GLES31.glDispatchCompute(
-            roundUp(tableWidth, 8) / 8,
-            roundUp(params.grid.gridY, 8) / 8,
-            1
-        )
-        GLES31.glMemoryBarrier(
-            GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
-        )
-        GLES31.glBindImageTexture(
-            RAW_HDR_LOCAL_TONE_IMAGE_BINDING,
-            0,
-            0,
-            false,
-            0,
-            GLES31.GL_WRITE_ONLY,
-            GLES31.GL_RGBA16F
-        )
-        checkGlError("RAW HDR local tone curve table")
-    }
-
-    private fun renderRawHdrLocalToneApply(
-        inputTextureId: Int,
-        gainTextureId: Int,
-        width: Int,
-        height: Int,
-        params: RawHdrLocalToneParams
-    ) {
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearOutputFramebufferId)
-        GLES30.glUseProgram(rawHdrLocalToneApplyProgram)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uInputTexture"), 0)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, gainTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uGainTable"), 1)
-        GLES30.glUniform2i(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uGridSize"),
-            params.grid.gridX,
-            params.grid.gridY
-        )
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uBinCount"),
-            params.grid.binCount
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uExposureScale"),
-            params.exposureScale
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uLogMin"),
-            RAW_HDR_LOCAL_TONE_LOG_MIN
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uLogMax"),
-            RAW_HDR_LOCAL_TONE_LOG_MAX
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uStrength"),
-            params.strength
-        )
-
-        val identityMatrix = FloatArray(16)
-        GlMatrix.setIdentityM(identityMatrix, 0)
-        GLES30.glUniformMatrix4fv(
-            GLES30.glGetUniformLocation(rawHdrLocalToneApplyProgram, "uTexMatrix"),
-            1,
-            false,
-            identityMatrix,
-            0
-        )
-        drawQuad(rawHdrLocalToneApplyProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        GLES31.glMemoryBarrier(
-            GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
-        )
-        checkGlError("RAW HDR local tone apply")
-    }
-
     private fun bindCurveCombinedResource(program: Int, baseCurve: FloatArray) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         uploadCurveTexture(baseCurve)
@@ -4193,24 +3799,6 @@ class RawDemosaicProcessor {
         if (location >= 0) {
             GLES30.glUniform3f(location, value[0], value[1], value[2])
         }
-    }
-
-    private fun safeLog2(value: Float): Float {
-        val safeValue = value.coerceAtLeast(1e-6f)
-        return (ln(safeValue.toDouble()) / ln(2.0)).toFloat()
-    }
-
-    private fun smoothStepScalar(edge0: Float, edge1: Float, value: Float): Float {
-        val width = edge1 - edge0
-        if (abs(width) < 1e-6f) {
-            return if (value >= edge1) 1f else 0f
-        }
-        val t = ((value - edge0) / width).coerceIn(0f, 1f)
-        return t * t * (3f - 2f * t)
-    }
-
-    private fun lerpScalar(start: Float, end: Float, fraction: Float): Float {
-        return start + (end - start) * fraction.coerceIn(0f, 1f)
     }
 
     private fun computeFilmicToneCurveUniforms(params: RawToneMappingParameters): FilmicToneCurveUniforms {
@@ -4699,9 +4287,10 @@ class RawDemosaicProcessor {
         profileExposureCompensation: Float,
         dcpRenderPlan: DcpRenderPlan?,
         applyDcpBaselineExposureOffset: Boolean,
+        applyDngBaselineExposure: Boolean,
         useRamp: Boolean
     ): ProfileExposureUniforms {
-        val dngBaselineExposure = if (metadata.baselineExposure.isFinite()) {
+        val dngBaselineExposure = if (applyDngBaselineExposure && metadata.baselineExposure.isFinite()) {
             metadata.baselineExposure
         } else {
             0f
@@ -4793,6 +4382,14 @@ class RawDemosaicProcessor {
         return normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
     }
 
+    private fun exactDngBaselineExposureGain(metadata: RawMetadata): Float {
+        return if (metadata.baselineExposure.isFinite()) {
+            2.0f.pow(metadata.baselineExposure).coerceIn(1e-6f, 65536f)
+        } else {
+            1f
+        }
+    }
+
     private fun renderLinearRcdPass(
         metadata: RawMetadata,
         sourceTextureId: Int,
@@ -4826,12 +4423,28 @@ class RawDemosaicProcessor {
             transposedCCM,
             0
         )
-        val exposureGain = computeLinearExposureGain(
-            metadata,
-            rawExposureCompensation,
-            dcpRenderPlan,
-            applyDcpBaselineExposureOffset,
+        val hasActiveProfileGainTableMap = metadata.profileGainTableMap?.isValid == true &&
             applyDngBaselineExposure
+        val extraLinearExposureEv = rawExposureCompensation + if (applyDcpBaselineExposureOffset) {
+            dcpRenderPlan?.baselineExposureOffset ?: 0f
+        } else {
+            0f
+        }
+        val exposureGain = if (hasActiveProfileGainTableMap) {
+            exactDngBaselineExposureGain(metadata) * 2.0f.pow(extraLinearExposureEv)
+        } else {
+            computeLinearExposureGain(
+                metadata,
+                rawExposureCompensation,
+                dcpRenderPlan,
+                applyDcpBaselineExposureOffset,
+                applyDngBaselineExposure
+            )
+        }
+        bindProfileGainTableMapForLinearRcd(
+            linearRcdProgram,
+            metadata,
+            hasActiveProfileGainTableMap
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(linearRcdProgram, "uExposureGain"), exposureGain)
 
@@ -4854,6 +4467,121 @@ class RawDemosaicProcessor {
 
         drawQuad(linearRcdProgram)
         checkGlError("$label drawQuad")
+    }
+
+    private fun bindProfileGainTableMapForLinearRcd(
+        program: Int,
+        metadata: RawMetadata,
+        applyAfterDngBaselineExposure: Boolean
+    ) {
+        val profileGainTableMap = metadata.profileGainTableMap?.takeIf { it.isValid }
+        if (profileGainTableMap == null || !applyAfterDngBaselineExposure) {
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
+            return
+        }
+        val textureId = ensureProfileGainTableTexture(profileGainTableMap)
+        if (textureId == 0) {
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
+            return
+        }
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainTableMap"), 2)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 1)
+        GLES30.glUniform3i(
+            GLES30.glGetUniformLocation(program, "uProfileGainTableSize"),
+            profileGainTableMap.mapPointsH,
+            profileGainTableMap.mapPointsV,
+            profileGainTableMap.mapPointsN
+        )
+        GLES30.glUniform4f(
+            GLES30.glGetUniformLocation(program, "uProfileGainGrid"),
+            profileGainTableMap.mapOriginH.toFloat(),
+            profileGainTableMap.mapOriginV.toFloat(),
+            profileGainTableMap.mapSpacingH.toFloat(),
+            profileGainTableMap.mapSpacingV.toFloat()
+        )
+        val weights = profileGainTableMap.mapInputWeights
+        GLES30.glUniform4f(
+            GLES30.glGetUniformLocation(program, "uProfileGainWeights0"),
+            weights.getOrElse(0) { 0f },
+            weights.getOrElse(1) { 0f },
+            weights.getOrElse(2) { 0f },
+            weights.getOrElse(3) { 0f }
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileGainWeightMax"),
+            weights.getOrElse(4) { 0f }
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileGainGamma"),
+            profileGainTableMap.gamma.coerceIn(0.25f, 4.0f)
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileGainBaselineGain"),
+            exactDngBaselineExposureGain(metadata)
+        )
+    }
+
+    private fun ensureProfileGainTableTexture(profileGainTableMap: DngProfileGainTableMap): Int {
+        if (profileGainTableTextureId != 0 && profileGainTableTextureSource == profileGainTableMap) {
+            return profileGainTableTextureId
+        }
+        if (profileGainTableTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(profileGainTableTextureId), 0)
+            profileGainTableTextureId = 0
+            profileGainTableTextureSource = null
+        }
+        val textureWidth = profileGainTableMap.mapPointsH * profileGainTableMap.mapPointsN
+        val textureHeight = profileGainTableMap.mapPointsV
+        if (textureWidth <= 0 || textureHeight <= 0 ||
+            textureWidth > maxTextureSize || textureHeight > maxTextureSize
+        ) {
+            PLog.w(
+                TAG,
+                "ProfileGainTableMap texture too large: ${textureWidth}x$textureHeight max=$maxTextureSize"
+            )
+            return 0
+        }
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        val textureId = textures[0]
+        val buffer = ByteBuffer
+            .allocateDirect(profileGainTableMap.gains.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .put(profileGainTableMap.gains)
+        buffer.position(0)
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_R32F,
+            textureWidth,
+            textureHeight,
+            0,
+            GLES30.GL_RED,
+            GLES30.GL_FLOAT,
+            buffer
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        checkGlError("ensureProfileGainTableTexture")
+
+        profileGainTableTextureId = textureId
+        profileGainTableTextureSource = profileGainTableMap
+        PLog.d(
+            TAG,
+            "ProfileGainTableMap texture uploaded: ${profileGainTableMap.mapPointsH}x" +
+                "${profileGainTableMap.mapPointsV}x${profileGainTableMap.mapPointsN} tag=${profileGainTableMap.sourceTag}"
+        )
+        return textureId
     }
 
     private suspend fun resolveRawAutoExposureEv(
@@ -5443,9 +5171,6 @@ class RawDemosaicProcessor {
         if (quadWriteOutputProgram != 0) GLES31.glDeleteProgram(quadWriteOutputProgram)
         if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
         if (rawAeBaseProgram != 0) GLES31.glDeleteProgram(rawAeBaseProgram)
-        if (rawHdrLocalToneBaseProgram != 0) GLES31.glDeleteProgram(rawHdrLocalToneBaseProgram)
-        if (rawHdrLocalToneCurveProgram != 0) GLES31.glDeleteProgram(rawHdrLocalToneCurveProgram)
-        if (rawHdrLocalToneApplyProgram != 0) GLES30.glDeleteProgram(rawHdrLocalToneApplyProgram)
 
         // darktable denoiseprofile compute programs
         if (denoisePreconditionV2Program != 0) GLES31.glDeleteProgram(denoisePreconditionV2Program)
@@ -5464,6 +5189,11 @@ class RawDemosaicProcessor {
         denoiseNlmBufferPixels = 0
 
         if (rawTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+        if (profileGainTableTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(profileGainTableTextureId), 0)
+            profileGainTableTextureId = 0
+            profileGainTableTextureSource = null
+        }
         if (demosaicTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(demosaicTextureId), 0)
         if (linearOutputTextureId != 0) GLES30.glDeleteTextures(
             1,

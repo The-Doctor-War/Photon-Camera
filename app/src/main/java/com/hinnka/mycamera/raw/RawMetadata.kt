@@ -82,7 +82,8 @@ data class RawMetadata(
     val iso: Int = 100,
     val shutterSpeed: Long = 0L,
     val aperture: Float = 0f,
-    val frameCount: Int = 1
+    val frameCount: Int = 1,
+    val profileGainTableMap: DngProfileGainTableMap? = null
 ) {
     companion object {
         private const val TAG = "RawMetadata"

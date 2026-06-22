@@ -32,6 +32,7 @@ import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
+import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.SpectralFilmTuning
@@ -2657,6 +2658,15 @@ object GalleryManager {
                             "outputDomain=short, normalReference=${normalReferenceCandidate.exposureProduct}, " +
                             "short=${shortCandidate.exposureProduct}"
                 )
+                val rawHdrProfileGainTableMap =
+                    DngProfileGainTableMap.forHdrBaselineExposure(rawHdrBaselineExposureEv)
+                rawHdrProfileGainTableMap?.let {
+                    PLog.d(
+                        TAG,
+                        "RAW HDR DNG ProfileGainTableMap2: grid=${it.mapPointsH}x${it.mapPointsV} " +
+                            "points=${it.mapPointsN} baselineEv=$rawHdrBaselineExposureEv"
+                    )
+                }
                 val dngWritten = try {
                     trySaveStackedRawDng(
                         context = context,
@@ -2675,7 +2685,8 @@ object GalleryManager {
                         metadata = metadata,
                         shouldAutoSave = shouldAutoSave,
                         exportDngWithRawExport = exportDngWithRawExport,
-                        baselineExposureEv = rawHdrBaselineExposureEv
+                        baselineExposureEv = rawHdrBaselineExposureEv,
+                        profileGainTableMap = rawHdrProfileGainTableMap
                     )
                 } finally {
                     stackResult.fusedBayerBuffer = null
@@ -2907,6 +2918,7 @@ object GalleryManager {
         shouldAutoSave: Boolean,
         exportDngWithRawExport: Boolean,
         baselineExposureEv: Float = 0f,
+        profileGainTableMap: DngProfileGainTableMap? = null,
     ): Boolean {
         val tempDngFile = File(dngFile.parentFile, "temp_stacked.dng")
         val dngWritten = try {
@@ -2932,7 +2944,8 @@ object GalleryManager {
                     blackLevelMode = null,
                     customBlackLevel = null,
                     cfaCorrectionMode = metadata.rawCfaCorrectionMode,
-                    baselineExposureEv = baselineExposureEv
+                    baselineExposureEv = baselineExposureEv,
+                    profileGainTableMap = profileGainTableMap
                 )
             }
         } catch (e: Throwable) {

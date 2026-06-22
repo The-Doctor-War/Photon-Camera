@@ -5,6 +5,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
+import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
@@ -68,6 +69,7 @@ object SuperResolutionDngWriter {
     private const val TAG_CALIBRATION_ILLUMINANT_2 = 50779
     private const val TAG_ACTIVE_AREA = 50829
     private const val TAG_OPCODE_LIST_2 = 51009
+    private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
 
     fun write(
         outputStream: OutputStream,
@@ -84,6 +86,7 @@ object SuperResolutionDngWriter {
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
         baselineExposureEv: Float = 0f,
+        profileGainTableMap: DngProfileGainTableMap? = null,
     ): Boolean {
         if (width <= 0 || height <= 0) return false
 
@@ -140,7 +143,8 @@ object SuperResolutionDngWriter {
                 blackLevel = encodedBlackLevel,
                 whiteLevel = encodedWhiteLevel,
                 imageByteCount = imageByteCount,
-                baselineExposureEv = baselineExposureEv
+                baselineExposureEv = baselineExposureEv,
+                profileGainTableMap = profileGainTableMap?.takeIf { it.isValid }
             )
             val header = buildHeader(entries)
             outputStream.write(header)
@@ -150,7 +154,8 @@ object SuperResolutionDngWriter {
                 TAG,
                 "Wrote super-resolution DNG ${width}x${height} " +
                     "blackLevel=${encodedBlackLevel.joinToString()} whiteLevel=$encodedWhiteLevel " +
-                    "baselineExposureEv=$baselineExposureEv"
+                    "baselineExposureEv=$baselineExposureEv " +
+                    "profileGainTable=${profileGainTableMap?.takeIf { it.isValid }?.let { "${it.mapPointsH}x${it.mapPointsV}x${it.mapPointsN}" } ?: "none"}"
             )
             true
         }.onFailure {
@@ -169,6 +174,7 @@ object SuperResolutionDngWriter {
         whiteLevel: Int,
         imageByteCount: Long,
         baselineExposureEv: Float,
+        profileGainTableMap: DngProfileGainTableMap?,
     ): List<TiffEntry> {
         // The custom writer is used when the fused RAW dimensions no longer
         // match the camera sensor. The fused buffer already lives in its final
@@ -210,7 +216,11 @@ object SuperResolutionDngWriter {
             add(ascii(TAG_DATETIME, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())))
             add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
             add(byteArray(TAG_CFA_PATTERN, RawCfaCorrection.cfaPatternBytes(cfaPattern)))
-            add(byteArray(TAG_DNG_VERSION, byteArrayOf(1, 4, 0, 0)))
+            add(byteArray(TAG_DNG_VERSION, if (profileGainTableMap != null) {
+                byteArrayOf(1, 7, 0, 0)
+            } else {
+                byteArrayOf(1, 4, 0, 0)
+            }))
             add(byteArray(TAG_DNG_BACKWARD_VERSION, byteArrayOf(1, 1, 0, 0)))
             add(ascii(TAG_UNIQUE_CAMERA_MODEL, cameraModel))
             add(byteArray(TAG_CFA_PLANE_COLOR, byteArrayOf(0, 1, 2)))
@@ -233,6 +243,9 @@ object SuperResolutionDngWriter {
             }
             add(longArray(TAG_ACTIVE_AREA, longArrayOf(0, 0, height.toLong(), width.toLong())))
             opcodeList2?.let { add(undefined(TAG_OPCODE_LIST_2, it)) }
+            profileGainTableMap?.let {
+                add(undefined(TAG_PROFILE_GAIN_TABLE_MAP_2, it.encodeProfileGainTableMap2(ByteOrder.LITTLE_ENDIAN)))
+            }
         }.sortedBy { it.tag }
     }
 

@@ -10,6 +10,7 @@ import android.util.Log
 import android.util.Size
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.SafeImage
+import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
@@ -182,6 +183,7 @@ object RawProcessor {
         customBlackLevel: Float? = null,
         cfaCorrectionMode: String? = null,
         baselineExposureEv: Float = 0f,
+        profileGainTableMap: DngProfileGainTableMap? = null,
     ): Boolean {
         val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
         val hasCfaOverride = RawCfaCorrection.isOverrideMode(cfaCorrectionMode)
@@ -211,7 +213,8 @@ object RawProcessor {
                 valueDomain = valueDomain,
                 blackLevelMode = blackLevelMode,
                 customBlackLevel = customBlackLevel,
-                baselineExposureEv = baselineExposureEv
+                baselineExposureEv = baselineExposureEv,
+                profileGainTableMap = profileGainTableMap
             )
         }
 
