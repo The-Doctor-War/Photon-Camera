@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.color.TransferCurve
+import com.hinnka.mycamera.data.CustomImportManager
 import com.hinnka.mycamera.data.ZipCubeImportManager
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.orderedLutCategoryTitles
@@ -80,8 +81,10 @@ private fun sanitizeCategoryOrder(
         .distinct()
 }
 
-private fun isZipImportUri(uri: Uri): Boolean {
-    return uri.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true
+private fun isZipImportUri(context: android.content.Context, uri: Uri): Boolean {
+    return CustomImportManager.isZipImportFileName(
+        CustomImportManager.resolveDisplayFileName(context, uri)
+    )
 }
 
 /**
@@ -95,8 +98,8 @@ private fun isZipImportUri(uri: Uri): Boolean {
 fun FilterManagementScreen(
     viewModel: CameraViewModel,
     onBack: () -> Unit,
-    pendingZipImportUris: List<Uri> = emptyList(),
-    onZipImportHandled: () -> Unit = {},
+    pendingLutImportUris: List<Uri> = emptyList(),
+    onLutImportHandled: () -> Unit = {},
     locateLutId: String? = null,
     modifier: Modifier = Modifier
 ) {
@@ -186,13 +189,13 @@ fun FilterManagementScreen(
 
     val lazyListState = rememberLazyListState()
 
-    LaunchedEffect(pendingZipImportUris) {
-        if (pendingZipImportUris.isNotEmpty()) {
-            pendingImportUris = pendingZipImportUris
-            pendingZipUris = pendingZipImportUris.toSet()
+    LaunchedEffect(pendingLutImportUris) {
+        if (pendingLutImportUris.isNotEmpty()) {
+            pendingImportUris = pendingLutImportUris
+            pendingZipUris = pendingLutImportUris.filter { isZipImportUri(context, it) }.toSet()
             categoryText = ""
             showImportCategoryDialog = true
-            onZipImportHandled()
+            onLutImportHandled()
         }
     }
 
@@ -284,7 +287,7 @@ fun FilterManagementScreen(
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
             pendingImportUris = uris
-            pendingZipUris = uris.filter(::isZipImportUri).toSet()
+            pendingZipUris = uris.filter { isZipImportUri(context, it) }.toSet()
             categoryText = ""
             showImportCategoryDialog = true
         }
@@ -1343,7 +1346,7 @@ fun FilterManagementScreen(
 
                                 urisToImport.forEachIndexed { index, uri ->
                                     importProgress = Pair(index + 1, urisToImport.size)
-                                    if (uri in zipUrisToImport || isZipImportUri(uri)) {
+                                    if (uri in zipUrisToImport || isZipImportUri(context, uri)) {
                                         val result = withContext(Dispatchers.IO) {
                                             zipCubeImportManager.importCubeFilesFromZip(
                                                 uri = uri,

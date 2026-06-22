@@ -64,6 +64,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.data.CustomImportManager
 import com.hinnka.mycamera.gallery.GalleryManager
 import com.hinnka.mycamera.lut.creator.LutCreatorScreen
 import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
@@ -97,6 +98,7 @@ import com.hinnka.mycamera.utils.StartupTrace
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import com.hinnka.mycamera.viewmodel.GalleryTab
 import com.hinnka.mycamera.viewmodel.GalleryViewModel
+import java.util.Locale
 
 /**
  * 路由常量
@@ -146,6 +148,18 @@ object Routes {
     }
 }
 
+private val ZIP_IMPORT_MIME_TYPES = setOf(
+    "application/zip",
+    "application/x-zip-compressed"
+)
+
+private val CUBE_IMPORT_MIME_TYPES = setOf(
+    "application/cube",
+    "application/x-cube",
+    "application/vnd.adobe.cube",
+    "application/vnd.iridas.cube"
+)
+
 class MainActivity : ComponentActivity() {
 
     private val cameraViewModel: CameraViewModel by viewModels()
@@ -157,7 +171,7 @@ class MainActivity : ComponentActivity() {
     private var hasPermissions by mutableStateOf(false)
     private var mlPreloadComplete by mutableStateOf(false)
     private var pendingRoute by mutableStateOf<String?>(null)
-    private var pendingZipImportUris by mutableStateOf<List<Uri>>(emptyList())
+    private var pendingLutImportUris by mutableStateOf<List<Uri>>(emptyList())
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -283,8 +297,8 @@ class MainActivity : ComponentActivity() {
                                 galleryViewModel = galleryViewModel,
                                 pendingRoute = pendingRoute,
                                 onRouteHandled = { pendingRoute = null },
-                                pendingZipImportUris = pendingZipImportUris,
-                                onZipImportHandled = { pendingZipImportUris = emptyList() }
+                                pendingLutImportUris = pendingLutImportUris,
+                                onLutImportHandled = { pendingLutImportUris = emptyList() }
                             )
                         } else {
                             PermissionScreen(
@@ -327,9 +341,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        val zipUris = getZipImportUris(intent)
-        if (zipUris.isNotEmpty()) {
-            pendingZipImportUris = zipUris
+        val lutImportUris = getExternalLutImportUris(intent)
+        if (lutImportUris.isNotEmpty()) {
+            PLog.d("MainActivity", "External LUT import intent: action=${intent.action}, type=${intent.type}, count=${lutImportUris.size}")
+            pendingLutImportUris = lutImportUris
             pendingRoute = Routes.FILTER_MANAGEMENT
         } else if (intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
             val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -363,41 +378,60 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun getZipImportUris(intent: Intent): List<Uri> {
-        val isZipMimeType = intent.type?.let { type ->
-            type == "application/zip" ||
-                    type == "application/x-zip-compressed" ||
-                    type == "application/octet-stream"
-        } ?: false
-
-        val dataUri = intent.data
-        val dataLooksLikeZip = dataUri?.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true
-
+    private fun getExternalLutImportUris(intent: Intent): List<Uri> {
         return when (intent.action) {
             Intent.ACTION_VIEW -> {
-                if (dataUri != null && (isZipMimeType || dataLooksLikeZip)) listOf(dataUri) else emptyList()
+                listOfNotNull(intent.data)
+                    .filter { shouldHandleExternalLutImportUri(it, intent.type) }
             }
             Intent.ACTION_SEND -> {
-                if (!isZipMimeType) return emptyList()
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-                }
-                listOfNotNull(uri)
+                listOfNotNull(getStreamUri(intent))
+                    .filter { shouldHandleExternalLutImportUri(it, intent.type) }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
-                if (!isZipMimeType) return emptyList()
-                val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-                }
-                uris.orEmpty()
+                getStreamUris(intent)
+                    .filter { shouldHandleExternalLutImportUri(it, intent.type) }
             }
             else -> emptyList()
+        }
+    }
+
+    private fun shouldHandleExternalLutImportUri(uri: Uri, mimeType: String?): Boolean {
+        val fileName = CustomImportManager.resolveDisplayFileName(this, uri)
+        if (CustomImportManager.isExternalLutImportFileName(fileName)) {
+            return true
+        }
+
+        val normalizedMimeType = mimeType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase(Locale.US)
+
+        return when {
+            normalizedMimeType == null -> false
+            normalizedMimeType in ZIP_IMPORT_MIME_TYPES -> true
+            normalizedMimeType in CUBE_IMPORT_MIME_TYPES -> true
+            normalizedMimeType == "text/plain" -> CustomImportManager.isCubeImportFileName(fileName)
+            normalizedMimeType == "application/octet-stream" -> CustomImportManager.isExternalLutImportFileName(fileName)
+            else -> false
+        }
+    }
+
+    private fun getStreamUri(intent: Intent): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        }
+    }
+
+    private fun getStreamUris(intent: Intent): List<Uri> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)?.filterNotNull().orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
         }
     }
 
@@ -488,8 +522,8 @@ fun NavigationHost(
     galleryViewModel: GalleryViewModel,
     pendingRoute: String? = null,
     onRouteHandled: () -> Unit = {},
-    pendingZipImportUris: List<Uri> = emptyList(),
-    onZipImportHandled: () -> Unit = {}
+    pendingLutImportUris: List<Uri> = emptyList(),
+    onLutImportHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val navController = rememberNavController()
@@ -774,8 +808,8 @@ fun NavigationHost(
                     onBack = {
                         navController.popBackStack()
                     },
-                    pendingZipImportUris = pendingZipImportUris,
-                    onZipImportHandled = onZipImportHandled,
+                    pendingLutImportUris = pendingLutImportUris,
+                    onLutImportHandled = onLutImportHandled,
                     locateLutId = locateLutId
                 )
             }

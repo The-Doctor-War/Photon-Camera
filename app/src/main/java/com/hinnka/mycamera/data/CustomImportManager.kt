@@ -2,7 +2,7 @@ package com.hinnka.mycamera.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
+import android.provider.OpenableColumns
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutConverter
 import com.hinnka.mycamera.color.TransferCurve
@@ -50,6 +50,54 @@ class CustomImportManager(private val context: Context) {
 
         // 自定义 Logo 目录
         private const val CUSTOM_LOGO_DIR = "custom_logos"
+
+        private val EXTERNAL_LUT_IMPORT_EXTENSIONS = setOf("cube", "xmp", "plut")
+        private const val ZIP_IMPORT_EXTENSION = "zip"
+
+        fun resolveDisplayFileName(context: Context, uri: Uri): String? {
+            if (uri.scheme == "file") {
+                return uri.lastPathSegment
+            }
+
+            val displayName = try {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0 && cursor.moveToFirst()) {
+                        cursor.getString(nameIndex)
+                    } else {
+                        null
+                    }
+                }
+            } catch (e: Exception) {
+                PLog.w(TAG, "Failed to resolve display file name for $uri", e)
+                null
+            }
+
+            return displayName?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment
+        }
+
+        fun isExternalLutImportFileName(fileName: String?): Boolean {
+            val extension = fileName?.substringAfterLast('.', missingDelimiterValue = "")
+                ?.lowercase(Locale.US)
+                ?: return false
+            return extension in EXTERNAL_LUT_IMPORT_EXTENSIONS || extension == ZIP_IMPORT_EXTENSION
+        }
+
+        fun isCubeImportFileName(fileName: String?): Boolean {
+            return fileName?.substringAfterLast('.', missingDelimiterValue = "")
+                ?.lowercase(Locale.US) == "cube"
+        }
+
+        fun isZipImportFileName(fileName: String?): Boolean {
+            return fileName?.substringAfterLast('.', missingDelimiterValue = "")
+                ?.lowercase(Locale.US) == ZIP_IMPORT_EXTENSION
+        }
     }
 
     private fun sanitizeCustomLutCategory(category: String?): String {
@@ -1097,18 +1145,7 @@ class CustomImportManager(private val context: Context) {
      * 从 URI 获取文件名
      */
     private fun getFileName(uri: Uri): String? {
-        if (uri.scheme == "file") {
-            return uri.lastPathSegment
-        }
-        return try {
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                cursor.moveToFirst()
-                cursor.getString(nameIndex)
-            }
-        } catch (e: Exception) {
-            uri.lastPathSegment
-        }
+        return resolveDisplayFileName(context, uri)
     }
 
     private fun openInputStream(uri: Uri): java.io.InputStream? {
