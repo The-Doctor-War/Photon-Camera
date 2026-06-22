@@ -1,13 +1,11 @@
 package com.hinnka.mycamera.processing
 
-import com.hinnka.mycamera.utils.DeviceUtil
-
 enum class DenoiseAlgorithm(val persistedName: String) {
     Fast("FAST"),
     HighQuality("HIGH_QUALITY");
 
     companion object {
-        val DEFAULT = if (DeviceUtil.canShowPhantom) HighQuality else Fast
+        val DEFAULT = HighQuality
 
         fun fromPersistedName(
             value: String?,

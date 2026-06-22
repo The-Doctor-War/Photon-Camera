@@ -23,7 +23,6 @@ object DenoiseProfileShaders {
     private const val COMMON = """
         precision highp float;
         precision highp int;
-        precision highp uint;
 
         vec4 readPixel(sampler2D image, ivec2 coord, ivec2 size) {
             ivec2 c = clamp(coord, ivec2(0), size - ivec2(1));
