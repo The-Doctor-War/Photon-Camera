@@ -7,6 +7,8 @@ import android.content.Context
 import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.PhotoProcessor
 import com.hinnka.mycamera.processing.DenoiseAlgorithm
+import com.hinnka.mycamera.raw.RawRenderingEngine
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 /**
  * Coil 图像加载库的 LUT 转换器
@@ -28,7 +30,7 @@ class PhotoTransformation(
 ) : Transformation {
     
     override val cacheKey: String =
-        "photo_${metadata.hashCode()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}_d${denoiseAlgorithm.persistedName}"
+        "photo_${metadata.thumbnailTransformCacheKey()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}_d${denoiseAlgorithm.persistedName}"
 
     override suspend fun transform(input: Bitmap, size: Size): Bitmap {
         return photoProcessor.processBitmap(
@@ -41,4 +43,28 @@ class PhotoTransformation(
             chromaNoiseReduction
         )
     }
+}
+
+private fun MediaMetadata.thumbnailTransformCacheKey(): Int {
+    return copy(
+        rawDenoiseValue = null,
+        rawExposureCompensation = null,
+        rawAutoExposure = null,
+        rawHighlightsAdjustment = null,
+        rawShadowsAdjustment = null,
+        rawBlackPointCorrection = null,
+        rawWhitePointCorrection = null,
+        rawAutoWhiteBalanceEstimate = null,
+        rawDcpId = null,
+        rawRenderingEngine = RawRenderingEngine.AdobeCurve,
+        rawToneMappingParameters = RawToneMappingParameters.DEFAULT,
+        rawBlackLevelMode = null,
+        rawCustomBlackLevel = null,
+        rawCfaCorrectionMode = null,
+        cameraId = null,
+        sourceUri = null,
+        exportedUris = emptyList(),
+        hasAiDenoisedBase = false,
+        aiDenoiseStrength = null
+    ).hashCode()
 }

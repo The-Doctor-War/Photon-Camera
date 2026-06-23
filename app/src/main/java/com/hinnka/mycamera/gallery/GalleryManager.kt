@@ -200,6 +200,8 @@ object GalleryManager {
 
     private val _photoLibraryChangedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     val photoLibraryChangedEvents: SharedFlow<Unit> = _photoLibraryChangedEvents.asSharedFlow()
+    private val _photoThumbnailUpdatedEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val photoThumbnailUpdatedEvents: SharedFlow<String> = _photoThumbnailUpdatedEvents.asSharedFlow()
     private val hdrWorkLock = Any()
     private val hdrWorkCounts = ConcurrentHashMap<String, Int>()
 
@@ -209,6 +211,10 @@ object GalleryManager {
 
     fun notifyPhotoLibraryChanged() {
         _photoLibraryChangedEvents.tryEmit(Unit)
+    }
+
+    private fun notifyPhotoThumbnailUpdated(photoId: String) {
+        _photoThumbnailUpdatedEvents.tryEmit(photoId)
     }
 
     private fun getPhotosBaseDir(context: Context): File {
@@ -1621,8 +1627,6 @@ object GalleryManager {
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
-            saveMetadata(context, photoId, updatedMetadata)
-
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
@@ -1668,6 +1672,7 @@ object GalleryManager {
                 )
             }
             updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
+            saveMetadata(context, photoId, updatedMetadata)
             if (shouldAutoSave) {
                 exportPhoto(
                     context,
@@ -2467,8 +2472,6 @@ object GalleryManager {
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
-            saveMetadata(context, photoId, updatedMetadata)
-
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
@@ -2517,6 +2520,7 @@ object GalleryManager {
             }
 
             updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
+            saveMetadata(context, photoId, updatedMetadata)
             // Auto Save
             if (shouldAutoSave) {
                 exportPhoto(
@@ -2845,8 +2849,6 @@ object GalleryManager {
         ) ?: return
         var bitmap = rawResult.sdrBitmap
 
-        saveMetadata(context, photoId, updatedMetadata)
-
         if (updatedMetadata.isMirrored) {
             bitmap = BitmapUtils.flipHorizontal(bitmap)
         }
@@ -2894,6 +2896,7 @@ object GalleryManager {
         }
 
         updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
+        saveMetadata(context, photoId, updatedMetadata)
         if (shouldAutoSave) {
             exportPhoto(
                 context,
@@ -3779,6 +3782,7 @@ object GalleryManager {
 
                 val thumbnailFile = getThumbnailFile(context, photoId)
                 generateThumbnail(processedBitmap, thumbnailFile)
+                notifyPhotoThumbnailUpdated(photoId)
 
                 if (processedBitmap !== originalBitmap) {
                     processedBitmap.recycle()

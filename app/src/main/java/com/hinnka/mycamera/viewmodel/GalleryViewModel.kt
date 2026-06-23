@@ -698,6 +698,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
 
         viewModelScope.launch {
+            GalleryManager.photoThumbnailUpdatedEvents.collect { photoId ->
+                invalidateGridThumbnailCache(photoId)
+                photoRefreshKeys[photoId] = System.currentTimeMillis()
+                PLog.d(TAG, "thumbnail updated, refreshed photo thumbnail: $photoId")
+            }
+        }
+
+        viewModelScope.launch {
             GalleryManager.photoMetadataUpdatedEvents.collect { update ->
                 applyPhotoMetadataUpdateToMemory(update.photoId, update.metadata)
             }

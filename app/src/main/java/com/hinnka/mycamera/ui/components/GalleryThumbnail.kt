@@ -37,6 +37,7 @@ fun GalleryThumbnail(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val refreshKey = latestPhoto?.id?.let { viewModel.photoRefreshKeys[it] } ?: 0L
     
     Box(
         modifier = modifier
@@ -54,6 +55,9 @@ fun GalleryThumbnail(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(latestPhoto.thumbnailUri)
+                    .memoryCacheKey(
+                        "gallery_thumbnail_${latestPhoto.id}_${latestPhoto.thumbnailUri}_${refreshKey}_${transformation?.cacheKey.orEmpty()}"
+                    )
                     .crossfade(true)
                     .apply {
                         if (transformation != null) {
