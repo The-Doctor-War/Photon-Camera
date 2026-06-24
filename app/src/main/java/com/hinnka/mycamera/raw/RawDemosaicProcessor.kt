@@ -161,6 +161,8 @@ class RawDemosaicProcessor {
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
         private const val RAW_HIDDEN_CHROMA_DENOISE_BASE = 0.5f
+        private const val EGL_CONTEXT_PRIORITY_LEVEL_IMG = 0x3100
+        private const val EGL_CONTEXT_PRIORITY_LOW_IMG = 0x3103
         private const val PROFILE_GAIN_TABLE_TEXTURE_UNIT = 2
         private const val RCD_RAW_TEXTURE_UNIT = 0
         private const val RCD_LENS_SHADING_TEXTURE_UNIT = 1
@@ -1439,6 +1441,10 @@ class RawDemosaicProcessor {
                 return false
             }
 
+            val eglExtensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty()
+            val supportsLowPriorityContext =
+                eglExtensions.split(' ').contains("EGL_IMG_context_priority")
+
             // 配置属性
             val configAttribs = intArrayOf(
                 EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
@@ -1470,11 +1476,35 @@ class RawDemosaicProcessor {
             val config = configs[0] ?: return false
 
             // 创建 EGL Context (ES 3.0)
-            val contextAttribs = intArrayOf(
+            val normalContextAttribs = intArrayOf(
                 EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
                 EGL14.EGL_NONE
             )
+            val lowPriorityContextAttribs = intArrayOf(
+                EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_LOW_IMG,
+                EGL14.EGL_NONE
+            )
+            val contextAttribs = if (supportsLowPriorityContext) {
+                lowPriorityContextAttribs
+            } else {
+                normalContextAttribs
+            }
             eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
+            if (eglContext == EGL14.EGL_NO_CONTEXT && supportsLowPriorityContext) {
+                val eglError = EGL14.eglGetError()
+                PLog.w(
+                    TAG,
+                    "Low-priority EGL context unavailable, falling back to normal priority: error=$eglError"
+                )
+                eglContext = EGL14.eglCreateContext(
+                    eglDisplay,
+                    config,
+                    EGL14.EGL_NO_CONTEXT,
+                    normalContextAttribs,
+                    0
+                )
+            }
             if (eglContext == EGL14.EGL_NO_CONTEXT) {
                 PLog.e(TAG, "Unable to create EGL context")
                 return false

@@ -179,6 +179,9 @@ class LutImageProcessor {
                 PLog.e(TAG, "Unable to initialize EGL")
                 return false
             }
+            val eglExtensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty()
+            val supportsLowPriorityContext =
+                eglExtensions.split(' ').contains("EGL_IMG_context_priority")
 
             // 配置属性
             val configAttribs = intArrayOf(
@@ -201,11 +204,35 @@ class LutImageProcessor {
             val config = configs[0] ?: return false
 
             // 创建 EGL Context
-            val contextAttribs = intArrayOf(
+            val normalContextAttribs = intArrayOf(
                 EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
                 EGL14.EGL_NONE
             )
+            val lowPriorityContextAttribs = intArrayOf(
+                EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_LOW_IMG,
+                EGL14.EGL_NONE
+            )
+            val contextAttribs = if (supportsLowPriorityContext) {
+                lowPriorityContextAttribs
+            } else {
+                normalContextAttribs
+            }
             eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
+            if (eglContext == EGL14.EGL_NO_CONTEXT && supportsLowPriorityContext) {
+                val eglError = EGL14.eglGetError()
+                PLog.w(
+                    TAG,
+                    "Low-priority EGL context unavailable, falling back to normal priority: error=$eglError"
+                )
+                eglContext = EGL14.eglCreateContext(
+                    eglDisplay,
+                    config,
+                    EGL14.EGL_NO_CONTEXT,
+                    normalContextAttribs,
+                    0
+                )
+            }
             if (eglContext == EGL14.EGL_NO_CONTEXT) {
                 PLog.e(TAG, "Unable to create EGL context")
                 return false
@@ -2230,6 +2257,8 @@ class LutImageProcessor {
         private const val TAG = "LutImageProcessor"
         private const val BITMAP_DENOISE_A = 0.008f
         private const val BITMAP_DENOISE_B = 0.0005f
+        private const val EGL_CONTEXT_PRIORITY_LEVEL_IMG = 0x3100
+        private const val EGL_CONTEXT_PRIORITY_LOW_IMG = 0x3103
 
         // 2D 图片版本的顶点着色器
         private val IMAGE_VERTEX_SHADER = """
