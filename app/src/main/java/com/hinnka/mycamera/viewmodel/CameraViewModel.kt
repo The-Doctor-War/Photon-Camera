@@ -2251,19 +2251,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         cameraController.setQuickShotCaptureState(isCapturing = true)
+        val quickShotRotation = capturePreviewThumbnailRotation()
         glView.capturePreviewFrame(quickShotCaptureLongEdge()) { bitmap ->
             cameraController.setQuickShotCaptureState(isCapturing = false)
             viewModelScope.launch {
+                var bitmapToSave = bitmap
                 try {
+                    bitmapToSave = rotatePreviewBitmapForCapture(bitmap, quickShotRotation)
                     savePreviewBitmapCapture(
-                        bitmap = bitmap,
+                        bitmap = bitmapToSave,
                         metadataCaptureMode = "quick_shot",
                         ratio = state.value.aspectRatio,
                         storeRenderedLookMetadata = false
                     )
                 } finally {
-                    if (!bitmap.isRecycled) {
-                        bitmap.recycle()
+                    if (!bitmapToSave.isRecycled) {
+                        bitmapToSave.recycle()
                     }
                 }
             }
@@ -2359,6 +2362,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         quickShotBurstCaptureInFlight = true
+        val quickShotRotation = capturePreviewThumbnailRotation()
         glView.captureNextPreviewFrame(quickShotCaptureLongEdge()) { bitmap ->
             quickShotBurstCaptureInFlight = false
             if (!quickShotBurstActive) {
@@ -2382,7 +2386,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             burstImageCount++
             viewModelScope.launch {
                 try {
-                    saveQuickShotBurstFrame(bitmap)
+                    saveQuickShotBurstFrame(bitmap, quickShotRotation)
                 } finally {
                     if (!bitmap.isRecycled) {
                         bitmap.recycle()
@@ -3142,7 +3146,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (glView != null) {
             val thumbnailRotation = capturePreviewThumbnailRotation()
             glView.capturePreviewFrame { bitmap ->
-                previewThumbnail = rotateCapturePreviewThumbnail(bitmap, thumbnailRotation)
+                previewThumbnail = rotatePreviewBitmapForCapture(bitmap, thumbnailRotation)
                 isGeneratingPreviews = false
             }
         } else {
@@ -3163,7 +3167,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return ((baseRotation + orientationOffset) % 360).toFloat()
     }
 
-    private fun rotateCapturePreviewThumbnail(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
+    private fun rotatePreviewBitmapForCapture(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
         if (rotationDegrees == 0f) {
             return bitmap
         }
@@ -3172,7 +3176,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val rotated = BitmapUtils.rotate(bitmap, rotationDegrees)
         PLog.d(
             TAG,
-            "Preview thumbnail rotated for capture: ${sourceWidth}x${sourceHeight}, rotation=$rotationDegrees"
+            "Preview bitmap rotated for capture: ${sourceWidth}x${sourceHeight}, rotation=$rotationDegrees"
         )
         return rotated
     }
@@ -4436,10 +4440,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun saveQuickShotBurstFrame(bitmap: Bitmap) {
+    private suspend fun saveQuickShotBurstFrame(bitmap: Bitmap, rotationDegrees: Float) {
+        var bitmapToSave: Bitmap? = null
         try {
             val context = getApplication<Application>()
             val photoId = burstPhotoId ?: return
+            val captureBitmap = rotatePreviewBitmapForCapture(bitmap, rotationDegrees)
+            bitmapToSave = captureBitmap
             val currentState = state.value
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
             val sharpeningValue = sharpening.firstOrNull() ?: 0f
@@ -4457,8 +4464,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
             val captureInfo = cameraController.rebuildCaptureInfo(
                 result = null,
-                imageWidth = bitmap.width,
-                imageHeight = bitmap.height,
+                imageWidth = captureBitmap.width,
+                imageHeight = captureBitmap.height,
                 latitude = currentState.latitude,
                 longitude = currentState.longitude
             )
@@ -4498,8 +4505,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     spectralFilmCDensityGain = 1f,
                     spectralFilmMDensityGain = 1f,
                     spectralFilmYDensityGain = 1f,
-                    width = bitmap.width,
-                    height = bitmap.height,
+                    width = captureBitmap.width,
+                    height = captureBitmap.height,
                     ratio = currentState.aspectRatio,
                     rotation = 0,
                     deviceModel = captureInfo.model,
@@ -4528,7 +4535,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     context,
                     metadata,
                     null,
-                    bitmap,
+                    captureBitmap,
                     false,
                     1.0f,
                     includeCropRegionInOutputSize = false,
@@ -4543,7 +4550,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             GalleryManager.saveBitmapBurstPhoto(
                 context,
                 photoId,
-                bitmap,
+                captureBitmap,
                 shouldAutoSave,
                 contentRepository.photoProcessor,
                 sharpeningValue,
@@ -4553,6 +4560,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to save quick-shot burst frame", e)
+        } finally {
+            bitmapToSave?.let { rotated ->
+                if (rotated !== bitmap && !rotated.isRecycled) {
+                    rotated.recycle()
+                }
+            }
         }
     }
 
