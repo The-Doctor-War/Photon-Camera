@@ -644,7 +644,10 @@ class PhotoProcessor(
             colorCorrection.creativeLayer,
             finalSharpening,
             finalNoiseReduction,
-            finalChromaNoiseReduction
+            finalChromaNoiseReduction,
+            linearInputToneMap = metadata.usesLinearPipelineToneMap(),
+            rawRenderingEngine = metadata.rawRenderingEngine,
+            rawToneMappingParameters = metadata.rawToneMappingParameters
         )
         YuvProcessor.free(input)
 
@@ -659,6 +662,23 @@ class PhotoProcessor(
         result = applyFrame(result, metadata)
 
         result
+    }
+
+    suspend fun processCapturePreviewToneMap(
+        input: Bitmap,
+        metadata: MediaMetadata,
+    ): Bitmap = withContext(Dispatchers.IO) {
+        if (!metadata.usesLinearPipelineToneMap()) return@withContext input
+        if (shouldDecodeHlgInput(metadata)) return@withContext input
+        lutImageProcessor.applyLut(
+            bitmap = input,
+            isHlgInput = false,
+            lutConfig = null,
+            colorRecipeParams = null,
+            linearInputToneMap = true,
+            rawRenderingEngine = metadata.rawRenderingEngine,
+            rawToneMappingParameters = metadata.rawToneMappingParameters
+        )
     }
 
     /**

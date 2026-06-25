@@ -26,10 +26,11 @@ import kotlin.math.log2
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 20,
+    val version: Int = 21,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
+    val tonemapMode: String? = null,
     // 色彩配方配置
     val colorRecipeParams: ColorRecipeParams? = null,
     val baselineTarget: BaselineColorCorrectionTarget? = null,
@@ -174,6 +175,13 @@ data class MediaMetadata(
     val resolution: String
         get() = "${width}x${height}"
 
+    fun usesLinearPipelineToneMap(): Boolean {
+        return when (tonemapMode) {
+            "LINEAR_PIPELINE", "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> true
+            else -> false
+        }
+    }
+
     /**
      * 从 RawMetadata 补齐信息
      */
@@ -250,6 +258,7 @@ data class MediaMetadata(
                         } ?: MediaType.IMAGE
                     },
                     lutId = if (obj.isNull("lutId")) null else obj.optString("lutId"),
+                    tonemapMode = if (obj.isNull("tonemapMode")) null else obj.optString("tonemapMode"),
                     colorRecipeParams = colorRecipeParams,
                     baselineTarget = if (obj.isNull("baselineTarget")) null else runCatching {
                         BaselineColorCorrectionTarget.valueOf(obj.optString("baselineTarget"))

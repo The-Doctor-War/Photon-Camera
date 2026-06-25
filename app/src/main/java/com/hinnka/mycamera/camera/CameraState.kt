@@ -337,7 +337,7 @@ data class CameraState(
     val rawMinShutterSpeedNs: Long = 0L,
     val useLivePhoto: Boolean = false,
     val droMode: String = "OFF",
-    val tonemapMode: String = "FAST",
+    val tonemapMode: String = "SYSTEM_DEFAULT",
     val fixTonemapPreview: Boolean = false,
     // 是否正在拍摄 Live Photo (用于 UI 动画)
     val isCapturingLivePhoto: Boolean = false,

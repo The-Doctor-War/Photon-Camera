@@ -1013,7 +1013,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.Eagerly, "OFF")
     val tonemapMode: StateFlow<String> = userPreferencesRepository.userPreferences
         .map { it.tonemapMode }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "FAST")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "SYSTEM_DEFAULT")
     val fixTonemapPreview: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.fixTonemapPreview }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -4185,6 +4185,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
+                tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
                 frameId = frameIdToSave,
                 colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,

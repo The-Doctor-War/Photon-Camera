@@ -1982,21 +1982,11 @@ class Camera2Controller(private val context: Context) {
         val curve = FloatArray(points * 2)
         for (i in 0 until points) {
             val x = i.toFloat() / (points - 1)
-            val linearInput = if (linearizeInput) inverseSrgb(x) else x
-            val y = linearToSrgb(linearInput)
-            curve[i * 2] = x
-            curve[i * 2 + 1] = y.coerceIn(0f, 1f)
-        }
-        return curve
-    }
-
-    private fun generateRec709Curve(linearizeInput: Boolean = false): FloatArray {
-        val points = 64
-        val curve = FloatArray(points * 2)
-        for (i in 0 until points) {
-            val x = i.toFloat() / (points - 1)
-            val linearInput = if (linearizeInput) inverseSrgb(x) else x
-            val y = linearToRec709(linearInput)
+            val y = if (linearizeInput) {
+                x
+            } else {
+                linearToSrgb(x)
+            }
             curve[i * 2] = x
             curve[i * 2 + 1] = y.coerceIn(0f, 1f)
         }
@@ -2019,69 +2009,14 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun linearToRec709(x: Float): Float {
-        return if (x < 0.018f) {
-            4.5f * x
-        } else {
-            1.099f * Math.pow(x.toDouble(), 0.45).toFloat() - 0.099f
-        }
-    }
-
-    private fun getAcr3LinearValue(x: Float): Float {
-        val samples = com.hinnka.mycamera.raw.ACR3Curve.samples()
-        val length = samples.size
-        if (length == 0) return x
-        val index = x * (length - 1)
-        val low = Math.floor(index.toDouble()).toInt().coerceIn(0, length - 1)
-        val high = Math.ceil(index.toDouble()).toInt().coerceIn(0, length - 1)
-        if (low == high) return samples[low]
-        val weight = index - low
-        return samples[low] * (1f - weight) + samples[high] * weight
-    }
-
-    private fun generateSrgbAcr3Curve(linearizeInput: Boolean = false): FloatArray {
-        val points = 64
-        val curve = FloatArray(points * 2)
-        for (i in 0 until points) {
-            val x = i.toFloat() / (points - 1)
-            val linearInput = if (linearizeInput) inverseSrgb(x) else x
-            val linearVal = getAcr3LinearValue(linearInput)
-            val y = linearToSrgb(linearVal)
-            curve[i * 2] = x
-            curve[i * 2 + 1] = y.coerceIn(0f, 1f)
-        }
-        return curve
-    }
-
-    private fun generateRec709Acr3Curve(linearizeInput: Boolean = false): FloatArray {
-        val points = 64
-        val curve = FloatArray(points * 2)
-        for (i in 0 until points) {
-            val x = i.toFloat() / (points - 1)
-            val linearInput = if (linearizeInput) inverseSrgb(x) else x
-            val linearVal = getAcr3LinearValue(linearInput)
-            val y = linearToRec709(linearVal)
-            curve[i * 2] = x
-            curve[i * 2 + 1] = y.coerceIn(0f, 1f)
-        }
-        return curve
+    private fun generateLinearToneCurve(): FloatArray {
+        return floatArrayOf(0f, 0f, 1f, 1f)
     }
 
     private fun applyToneMapSettings(builder: CaptureRequest.Builder, state: CameraState, isCapture: Boolean) {
         val linearizePreviewInput = state.fixTonemapPreview && !isCapture
         when (sanitizeTonemapMode(state.tonemapMode)) {
-            "FAST" -> {
-                if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_FAST)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
-                }
-            }
-            "HIGH_QUALITY" -> {
-                if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_HIGH_QUALITY)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_HIGH_QUALITY)
-                } else if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_FAST)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
-                }
-            }
+            "SYSTEM_DEFAULT" -> applyDefaultToneMapSettings(builder, state, isCapture)
             "SRGB" -> {
                 if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
                     builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
@@ -2090,50 +2025,47 @@ class Camera2Controller(private val context: Context) {
                     builder.set(CaptureRequest.TONEMAP_CURVE, curve)
                 }
             }
-            "REC709" -> {
+            "LINEAR_PIPELINE" -> {
                 if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
                     builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                    val rec709Curve = generateRec709Curve(linearizePreviewInput)
-                    val curve = TonemapCurve(rec709Curve, rec709Curve, rec709Curve)
+                    val linearCurve = generateLinearToneCurve()
+                    val curve = TonemapCurve(linearCurve, linearCurve, linearCurve)
                     builder.set(CaptureRequest.TONEMAP_CURVE, curve)
-                }
-            }
-            "SRGB_ACR3" -> {
-                if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                    val srgbAcr3Curve = generateSrgbAcr3Curve(linearizePreviewInput)
-                    val curve = TonemapCurve(srgbAcr3Curve, srgbAcr3Curve, srgbAcr3Curve)
-                    builder.set(CaptureRequest.TONEMAP_CURVE, curve)
-                }
-            }
-            "REC709_ACR3" -> {
-                if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                    val rec709Acr3Curve = generateRec709Acr3Curve(linearizePreviewInput)
-                    val curve = TonemapCurve(rec709Acr3Curve, rec709Acr3Curve, rec709Acr3Curve)
-                    builder.set(CaptureRequest.TONEMAP_CURVE, curve)
+                } else {
+                    applyDefaultToneMapSettings(builder, state, isCapture)
                 }
             }
             else -> {
-                val preferredTonemapMode = when {
-                    isCapture && state.captureMode == CaptureMode.PHOTO &&
-                            availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_HIGH_QUALITY) -> {
-                        CaptureRequest.TONEMAP_MODE_HIGH_QUALITY
-                    }
-                    availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_FAST) -> {
-                        CaptureRequest.TONEMAP_MODE_FAST
-                    }
-                    else -> null
-                }
-                preferredTonemapMode?.let { builder.set(CaptureRequest.TONEMAP_MODE, it) }
+                applyDefaultToneMapSettings(builder, state, isCapture)
             }
         }
     }
 
+    private fun applyDefaultToneMapSettings(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        isCapture: Boolean
+    ) {
+        val preferredTonemapMode = when {
+            isCapture && state.captureMode == CaptureMode.PHOTO &&
+                availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_HIGH_QUALITY) -> {
+                CaptureRequest.TONEMAP_MODE_HIGH_QUALITY
+            }
+            availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_FAST) -> {
+                CaptureRequest.TONEMAP_MODE_FAST
+            }
+            else -> null
+        }
+        preferredTonemapMode?.let { builder.set(CaptureRequest.TONEMAP_MODE, it) }
+    }
+
     private fun sanitizeTonemapMode(mode: String): String {
         return when (mode) {
-            "FAST", "HIGH_QUALITY", "SRGB", "REC709", "SRGB_ACR3", "REC709_ACR3" -> mode
-            else -> "FAST"
+            "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
+            "REC709" -> "SRGB"
+            "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> "LINEAR_PIPELINE"
+            "SYSTEM_DEFAULT", "SRGB", "LINEAR_PIPELINE" -> mode
+            else -> "SYSTEM_DEFAULT"
         }
     }
 

@@ -306,12 +306,9 @@
     <string name="settings_use_heic_export_description">在支持的设备上优先使用原生 HEIC 导出。</string>
     <string name="settings_tonemap_mode">色调映射</string>
     <string name="settings_tonemap_mode_description">调整硬件色调映射（对比度/伽马）模式</string>
-    <string name="settings_tonemap_mode_fast">快速</string>
-    <string name="settings_tonemap_mode_high_quality">高质量</string>
+    <string name="settings_tonemap_mode_system_default">系统默认</string>
     <string name="settings_tonemap_mode_srgb">sRGB</string>
-    <string name="settings_tonemap_mode_rec709">Rec.709</string>
-    <string name="settings_tonemap_mode_srgb_acr3">ACR3 + sRGB</string>
-    <string name="settings_tonemap_mode_rec709_acr3">ACR3 + Rec.709</string>
+    <string name="settings_tonemap_mode_natural_light">自然光影</string>
     <string name="settings_fix_tonemap_preview">修复色调映射预览异常</string>
     <string name="settings_fix_tonemap_preview_description">部分设备预览已自带 sRGB Gamma。开启后仅在预览中先转为线性再应用自定义色调曲线，拍摄输出不变。</string>
 

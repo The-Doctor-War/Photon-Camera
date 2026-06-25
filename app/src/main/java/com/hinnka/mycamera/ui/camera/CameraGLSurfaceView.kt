@@ -13,6 +13,8 @@ import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.LutRenderer
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.ColorPaletteMapper
+import com.hinnka.mycamera.raw.RawRenderingEngine
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.video.VideoLogProfile
@@ -190,6 +192,29 @@ class CameraGLSurfaceView @JvmOverloads constructor(
     fun setIsHlgInput(isHlg: Boolean) {
         renderer.isHlgInput = isHlg
         requestRender()
+    }
+
+    fun setRawPreviewSettings(
+        enabled: Boolean,
+        exposureCompensation: Float,
+        blackPointCorrection: Float,
+        whitePointCorrection: Float,
+        linearizeInput: Boolean,
+        renderingEngine: RawRenderingEngine,
+        toneMappingParameters: RawToneMappingParameters
+    ) {
+        queueEvent {
+            renderer.setRawPreviewSettings(
+                enabled = enabled,
+                exposureCompensation = exposureCompensation,
+                blackPointCorrection = blackPointCorrection,
+                whitePointCorrection = whitePointCorrection,
+                linearizeInput = linearizeInput,
+                renderingEngine = renderingEngine,
+                toneMappingParameters = toneMappingParameters
+            )
+            requestRender()
+        }
     }
 
     fun setAutoFocus(auto: Boolean) {

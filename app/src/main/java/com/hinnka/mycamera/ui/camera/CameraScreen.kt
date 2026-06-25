@@ -206,6 +206,8 @@ fun CameraScreen(
     val droMode by viewModel.droMode.collectAsState()
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
+    val tonemapMode by viewModel.tonemapMode.collectAsState()
+    val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
@@ -950,6 +952,13 @@ fun CameraScreen(
                         videoRecorder = viewModel.videoRecorder,
                         videoLogProfile = state.videoConfig.logProfile,
                         isHlgInput = if (hlgHardwareCompatibilityEnabled) state.isHLG else false,
+                        tonemapMode = tonemapMode,
+                        fixTonemapPreview = fixTonemapPreview,
+                        rawExposureCompensation = rawExposureCompensation,
+                        rawBlackPointCorrection = rawBlackPointCorrection,
+                        rawWhitePointCorrection = rawWhitePointCorrection,
+                        rawRenderingEngine = rawColorEngine,
+                        rawToneMappingParameters = rawToneMappingParameters,
                         aperture = if (state.isVirtualApertureEnabled) state.virtualAperture else 0f,
                         isAutoFocus = state.isAutoFocus,
                         focusPeakingEnabled = focusPeakingEnabled && !state.isHyperfocalFocusEnabled,

@@ -33,6 +33,7 @@ data class GalleryMediaEntity(
 
     val version: Int,
     val lutId: String?,
+    val tonemapMode: String?,
     @Embedded(prefix = "recipe_")
     val colorRecipeParams: ColorRecipeParams?,
     val baselineTarget: String?,

@@ -1522,6 +1522,13 @@ object GalleryManager {
             }
 
             if (success) {
+                if (metadata.usesLinearPipelineToneMap()) {
+                    val toneMappedPreview = photoProcessor.processCapturePreviewToneMap(previewBitmap, metadata)
+                    if (toneMappedPreview !== previewBitmap && !previewBitmap.isRecycled) {
+                        previewBitmap.recycle()
+                    }
+                    previewBitmap = toneMappedPreview
+                }
                 FileOutputStream(tempFile).use { outputStream ->
                     writeFinalJpeg(previewBitmap, outputStream, photoQuality)
                 }

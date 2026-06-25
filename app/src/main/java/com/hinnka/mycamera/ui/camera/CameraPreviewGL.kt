@@ -23,6 +23,8 @@ import com.hinnka.mycamera.camera.FocusPointSource
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.raw.RawRenderingEngine
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.ui.components.FocusIndicator
 import com.hinnka.mycamera.utils.OrientationObserver
 import com.hinnka.mycamera.video.CaptureMode
@@ -66,6 +68,13 @@ fun CameraPreviewGL(
     videoRecorder: VideoRecorder? = null,
     videoLogProfile: VideoLogProfile = VideoLogProfile.OFF,
     isHlgInput: Boolean = false,
+    tonemapMode: String = "SYSTEM_DEFAULT",
+    fixTonemapPreview: Boolean = false,
+    rawExposureCompensation: Float = 0f,
+    rawBlackPointCorrection: Float = 0f,
+    rawWhitePointCorrection: Float = 0f,
+    rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
+    rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     isAiFocusBusy: Boolean = false,
     onGLSurfaceViewReady: ((CameraGLSurfaceView) -> Unit)? = null,
     aperture: Float = 0f,
@@ -262,6 +271,15 @@ fun CameraPreviewGL(
                         glSurfaceView.setVideoRecorder(videoRecorder)
                         glSurfaceView.setVideoLogProfile(videoLogProfile)
                         glSurfaceView.setIsHlgInput(isHlgInput)
+                        glSurfaceView.setRawPreviewSettings(
+                            enabled = tonemapMode == "LINEAR_PIPELINE" || tonemapMode == "RAW_PREVIEW",
+                            exposureCompensation = rawExposureCompensation,
+                            blackPointCorrection = rawBlackPointCorrection,
+                            whitePointCorrection = rawWhitePointCorrection,
+                            linearizeInput = fixTonemapPreview,
+                            renderingEngine = rawRenderingEngine,
+                            toneMappingParameters = rawToneMappingParameters
+                        )
                         glSurfaceView.setAutoFocus(isAutoFocus)
                         glSurfaceView.setFocusPeakingEnabled(focusPeakingEnabled)
                         glSurfaceView.setAiFocusBusy(isAiFocusBusy)

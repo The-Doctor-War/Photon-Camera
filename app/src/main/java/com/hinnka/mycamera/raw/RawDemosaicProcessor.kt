@@ -3845,39 +3845,7 @@ class RawDemosaicProcessor {
     }
 
     private fun bindRawToneMappingUniforms(program: Int, params: RawToneMappingParameters) {
-        val normalized = params.normalized()
-        uniform1f(program, "uAgxBlackRelativeExposure", normalized.agxBlackRelativeExposure)
-        uniform1f(program, "uAgxWhiteRelativeExposure", normalized.agxWhiteRelativeExposure)
-        uniform1f(program, "uAgxToe", normalized.agxToe)
-        uniform1f(program, "uAgxShoulder", normalized.agxShoulder)
-
-        val filmic = computeFilmicToneCurveUniforms(normalized)
-        uniform1f(program, "uFilmicBlackRelativeExposure", filmic.blackRelativeExposure)
-        uniform1f(program, "uFilmicWhiteRelativeExposure", filmic.whiteRelativeExposure)
-        uniform1f(program, "uFilmicDynamicRange", filmic.dynamicRange)
-        uniform1f(program, "uFilmicInputMin", filmic.inputMin)
-        uniform1f(program, "uFilmicInputMax", filmic.inputMax)
-        uniform1f(program, "uFilmicLatitudeMin", filmic.latitudeMin)
-        uniform1f(program, "uFilmicLatitudeMax", filmic.latitudeMax)
-        uniform3f(program, "uFilmicM1", filmic.m1)
-        uniform3f(program, "uFilmicM2", filmic.m2)
-        uniform3f(program, "uFilmicM3", filmic.m3)
-        uniform3f(program, "uFilmicM4", filmic.m4)
-        uniform3f(program, "uFilmicM5", filmic.m5)
-    }
-
-    private fun uniform1f(program: Int, name: String, value: Float) {
-        val location = GLES30.glGetUniformLocation(program, name)
-        if (location >= 0) {
-            GLES30.glUniform1f(location, value)
-        }
-    }
-
-    private fun uniform3f(program: Int, name: String, value: FloatArray) {
-        val location = GLES30.glGetUniformLocation(program, name)
-        if (location >= 0) {
-            GLES30.glUniform3f(location, value[0], value[1], value[2])
-        }
+        RawToneMappingGl.bindRawToneMappingUniforms(program, params)
     }
 
     private fun computeFilmicToneCurveUniforms(params: RawToneMappingParameters): FilmicToneCurveUniforms {

@@ -74,40 +74,92 @@ object RawShaders {
         }
     """.trimIndent()
 
-    fun combinedFragmentShaderFor(colorEngine: RawRenderingEngine): String {
+    fun combinedFragmentShaderFor(
+        colorEngine: RawRenderingEngine,
+        includeShadowsHighlights: Boolean = true
+    ): String {
         return when (colorEngine) {
             RawRenderingEngine.AgX -> combinedFragmentShader(
                 engineUniforms = AGX_COMBINED_UNIFORMS,
-                engineFunctions = AGX_COMBINED_FUNCTIONS
+                engineFunctions = AGX_COMBINED_FUNCTIONS,
+                includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.AdobeCurve -> combinedFragmentShader(
                 engineUniforms = ADOBE_COMBINED_UNIFORMS,
                 engineFunctions =
-                    "$CURVE_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS"
+                    "$CURVE_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS",
+                includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.Spektrafilm -> combinedFragmentShader(
                 engineUniforms = SPECTRAL_FILM_COMBINED_UNIFORMS,
-                engineFunctions = SPECTRAL_FILM_COMBINED_FUNCTIONS
+                engineFunctions = SPECTRAL_FILM_COMBINED_FUNCTIONS,
+                includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.DarktableSigmoid -> combinedFragmentShader(
                 engineUniforms = OUTPUT_TRANSFORM_COMBINED_UNIFORMS,
-                engineFunctions = DARKTABLE_SIGMOID_COMBINED_FUNCTIONS
+                engineFunctions = DARKTABLE_SIGMOID_COMBINED_FUNCTIONS,
+                includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.DarktableFilmic -> combinedFragmentShader(
                 engineUniforms = OUTPUT_TRANSFORM_COMBINED_UNIFORMS,
-                engineFunctions = DARKTABLE_FILMIC_COMBINED_FUNCTIONS
+                engineFunctions = DARKTABLE_FILMIC_COMBINED_FUNCTIONS,
+                includeShadowsHighlights = includeShadowsHighlights
             )
         }
     }
 
     private fun combinedFragmentShader(
         engineUniforms: String,
-        engineFunctions: String
-    ): String = """
+        engineFunctions: String,
+        includeShadowsHighlights: Boolean
+    ): String {
+        val shadowsHighlightsUniforms = if (includeShadowsHighlights) {
+            """
+        uniform vec2 uTexelSize;
+        uniform float uHighlights;
+        uniform float uShadows;
+            """.trimIndent()
+        } else {
+            ""
+        }
+        val shadowsHighlightsFunctions = if (includeShadowsHighlights) {
+            """
+        vec3 sampleToneSource(vec2 uv) {
+            vec3 sampleColor = texture(uInputTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
+            return applyEngineTone(prepareEngineInput(sampleColor));
+        }
+
+        vec3 shRgbToXyz(vec3 rgb) {
+            return mat3(
+                0.4360747, 0.2225045, 0.0139322,
+                0.3850649, 0.7168786, 0.0971045,
+                0.1430804, 0.0606169, 0.7141733
+            ) * rgb;
+        }
+
+        vec3 shXyzToRgb(vec3 xyz) {
+            return mat3(
+                 3.1338561, -0.9787684,  0.0719453,
+                -1.6168667,  1.9161415, -0.2289914,
+                -0.4906146,  0.0334540,  1.4052427
+            ) * xyz;
+        }
+
+        ${ShadowsHighlightsShader.GLSL}
+            """.trimIndent()
+        } else {
+            ""
+        }
+        val shadowsHighlightsApply = if (includeShadowsHighlights) {
+            "color = applyShadowsHighlights(color, vTexCoord);"
+        } else {
+            ""
+        }
+        return """
         #version 300 es
         precision highp float;
         precision highp sampler3D;
@@ -116,9 +168,7 @@ object RawShaders {
         out vec4 fragColor;
         
         uniform sampler2D uInputTexture;
-        uniform vec2 uTexelSize;
-        uniform float uHighlights;
-        uniform float uShadows;
+        $shadowsHighlightsUniforms
         uniform mat3 uProfileToEngineTransform;
         
         $engineUniforms
@@ -145,38 +195,18 @@ object RawShaders {
             return color;
         }
 
-        vec3 sampleToneSource(vec2 uv) {
-            vec3 sampleColor = texture(uInputTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
-            return applyEngineTone(prepareEngineInput(sampleColor));
-        }
-
-        vec3 shRgbToXyz(vec3 rgb) {
-            return mat3(
-                0.4360747, 0.2225045, 0.0139322,
-                0.3850649, 0.7168786, 0.0971045,
-                0.1430804, 0.0606169, 0.7141733
-            ) * rgb;
-        }
-
-        vec3 shXyzToRgb(vec3 xyz) {
-            return mat3(
-                 3.1338561, -0.9787684,  0.0719453,
-                -1.6168667,  1.9161415, -0.2289914,
-                -0.4906146,  0.0334540,  1.4052427
-            ) * xyz;
-        }
-
-        ${ShadowsHighlightsShader.GLSL}
+        $shadowsHighlightsFunctions
 
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
             color = prepareEngineInput(color);
             color = applyEngineTone(color);
-            color = applyShadowsHighlights(color, vTexCoord);
+            $shadowsHighlightsApply
             color = linearToSrgb(color);
             fragColor = vec4(color, 1.0);
         }
     """.trimIndent()
+    }
 
     private val RAW_TONE_MAPPING_COMBINED_UNIFORMS = """
         uniform float uAgxBlackRelativeExposure;

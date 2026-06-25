@@ -50,8 +50,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 private fun sanitizeTonemapMode(mode: String): String {
     return when (mode) {
-        "FAST", "HIGH_QUALITY", "SRGB", "REC709", "SRGB_ACR3", "REC709_ACR3" -> mode
-        else -> "FAST"
+        "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
+        "REC709" -> "SRGB"
+        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> "LINEAR_PIPELINE"
+        "SYSTEM_DEFAULT", "SRGB", "LINEAR_PIPELINE" -> mode
+        else -> "SYSTEM_DEFAULT"
     }
 }
 
@@ -155,7 +158,7 @@ data class UserPreferences(
     val backgroundImage: String = "camera_bg", // 背景图资源名或文件路径
     val useGpuAcceleration: Boolean = DeviceUtil.defaultGpuAcceleration, // 多帧合成是否使用 GPU 加速
     val droMode: String = "OFF", // DRO 模式
-    val tonemapMode: String = "FAST", // 色调映射模式
+    val tonemapMode: String = "SYSTEM_DEFAULT", // 色调映射模式
     val fixTonemapPreview: Boolean = false, // 修复部分设备自定义色调映射预览异常
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
     val colorSpace: ColorSpace = ColorSpace.SRGB,
@@ -504,7 +507,7 @@ class UserPreferencesRepository(private val context: Context) {
                 backgroundImage = preferences[BACKGROUND_IMAGE] ?: "camera_bg",
                 useGpuAcceleration = preferences[USE_GPU_ACCELERATION] ?: DeviceUtil.defaultGpuAcceleration,
                 droMode = preferences[DRO_MODE] ?: if (preferences[RAW_DRO_ENABLED_KEY] == true) "DR100" else "OFF",
-                tonemapMode = sanitizeTonemapMode(preferences[TONEMAP_MODE] ?: "FAST"),
+                tonemapMode = sanitizeTonemapMode(preferences[TONEMAP_MODE] ?: "SYSTEM_DEFAULT"),
                 fixTonemapPreview = preferences[FIX_TONEMAP_PREVIEW] ?: false,
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
