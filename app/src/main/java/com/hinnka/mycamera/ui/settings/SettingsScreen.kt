@@ -248,7 +248,7 @@ fun SettingsScreen(
     val shutterSoundEnabled by viewModel.shutterSoundEnabled.collectAsState(initial = true)
     val vibrationEnabled by viewModel.vibrationEnabled.collectAsState(initial = true)
     val keepScreenOn by viewModel.keepScreenOn.collectAsState(initial = false)
-    val captureScreenBrightness by viewModel.captureScreenBrightness.collectAsState()
+    val windowScreenBrightness by viewModel.windowScreenBrightness.collectAsState()
     val volumeKeyAction by viewModel.volumeKeyAction.collectAsState()
     val topSheetAspectRatios by viewModel.topSheetAspectRatios.collectAsState()
     val customAspectRatios by viewModel.customAspectRatios.collectAsState()
@@ -344,8 +344,8 @@ fun SettingsScreen(
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
     var rawToneMappingParametersUi by remember { mutableStateOf(rawToneMappingParameters) }
     var aiFocusScoreThresholdUi by remember(aiFocusScoreThreshold) { mutableStateOf(aiFocusScoreThreshold) }
-    var captureScreenBrightnessUi by remember { mutableStateOf(captureScreenBrightness ?: 1f) }
-    var captureScreenBrightnessEnabled by remember { mutableStateOf(captureScreenBrightness != null) }
+    var windowScreenBrightnessUi by remember { mutableStateOf(windowScreenBrightness ?: 1f) }
+    var windowScreenBrightnessEnabled by remember { mutableStateOf(windowScreenBrightness != null) }
     var showAspectRatioDialog by remember { mutableStateOf(false) }
     var showAddIszLensDialog by remember { mutableStateOf(false) }
     var backupOperation by remember { mutableStateOf<BackupOperation?>(null) }
@@ -394,10 +394,10 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(captureScreenBrightness) {
-        captureScreenBrightnessEnabled = captureScreenBrightness != null
-        captureScreenBrightness?.let {
-            captureScreenBrightnessUi = it
+    LaunchedEffect(windowScreenBrightness) {
+        windowScreenBrightnessEnabled = windowScreenBrightness != null
+        windowScreenBrightness?.let {
+            windowScreenBrightnessUi = it
         }
     }
 
@@ -2002,25 +2002,25 @@ fun SettingsScreen(
                         )
 
                         SliderSettingItem(
-                            title = stringResource(R.string.settings_capture_screen_brightness),
-                            description = stringResource(R.string.settings_capture_screen_brightness_description),
-                            value = captureScreenBrightnessUi,
+                            title = stringResource(R.string.settings_window_screen_brightness),
+                            description = stringResource(R.string.settings_window_screen_brightness_description),
+                            value = windowScreenBrightnessUi,
                             valueRange = 0f..1f,
                             onValueChange = {
-                                captureScreenBrightnessUi = it.coerceIn(0f, 1f)
+                                windowScreenBrightnessUi = it.coerceIn(0f, 1f)
                             },
                             onValueChangeFinished = {
-                                if (captureScreenBrightnessEnabled) {
-                                    viewModel.setCaptureScreenBrightness(captureScreenBrightnessUi)
+                                if (windowScreenBrightnessEnabled) {
+                                    viewModel.setWindowScreenBrightness(windowScreenBrightnessUi)
                                 }
                             },
                             valueTextFormatter = { String.format("%.2f", it) },
                             resetValue = 1f,
-                            toggleValue = captureScreenBrightnessEnabled,
+                            toggleValue = windowScreenBrightnessEnabled,
                             onToggleChange = { enabled ->
-                                captureScreenBrightnessEnabled = enabled
-                                viewModel.setCaptureScreenBrightness(
-                                    if (enabled) captureScreenBrightnessUi else null
+                                windowScreenBrightnessEnabled = enabled
+                                viewModel.setWindowScreenBrightness(
+                                    if (enabled) windowScreenBrightnessUi else null
                                 )
                             }
                         )

@@ -140,8 +140,8 @@
     <string name="settings_vibration_description">拍照時產生震動回饋</string>
     <string name="settings_keep_screen_on">螢幕常亮</string>
     <string name="settings_keep_screen_on_description">開啟後使用相機時保持螢幕常亮；錄影時會始終保持螢幕常亮。</string>
-    <string name="settings_capture_screen_brightness">拍攝介面亮度</string>
-    <string name="settings_capture_screen_brightness_description">設定拍攝介面的螢幕亮度。關閉後使用系統預設亮度。</string>
+    <string name="settings_window_screen_brightness">螢幕亮度</string>
+    <string name="settings_window_screen_brightness_description">設定應用程式窗口的螢幕亮度。關閉後使用系統預設亮度。</string>
     <string name="settings_volume_key_action">音量鍵功能</string>
     <string name="settings_volume_key_action_description">設定音量鍵在拍攝時的操作</string>
     <string name="settings_mirror_front_camera">自拍鏡像</string>

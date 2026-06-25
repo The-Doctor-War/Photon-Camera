@@ -96,8 +96,8 @@
     <string name="settings_vibration_description">Vibration beim Fotografieren</string>
     <string name="settings_keep_screen_on">Bildschirm eingeschaltet lassen</string>
     <string name="settings_keep_screen_on_description">Hält den Bildschirm beim Verwenden der Kamera wach. Videoaufnahmen halten ihn immer wach.</string>
-    <string name="settings_capture_screen_brightness">Helligkeit der Aufnahmeansicht</string>
-    <string name="settings_capture_screen_brightness_description">Legt die Bildschirmhelligkeit in der Aufnahmeansicht fest. Deaktivieren, um die Systemvorgabe zu verwenden.</string>
+    <string name="settings_window_screen_brightness">Bildschirmhelligkeit</string>
+    <string name="settings_window_screen_brightness_description">Legt die Bildschirmhelligkeit für dieses App-Fenster fest. Deaktivieren, um die Systemvorgabe zu verwenden.</string>
     <string name="settings_volume_key_action">Lautstärketasten-Aktion</string>
     <string name="settings_volume_key_action_description">Wählen Sie, was die Lautstärketasten bei der Aufnahme bewirken</string>
     <string name="settings_volume_key_action_none">Lautstärkeregelung</string>

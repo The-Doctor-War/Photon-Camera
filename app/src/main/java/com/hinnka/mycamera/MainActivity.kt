@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -194,6 +195,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun applyWindowScreenBrightness(brightness: Float?) {
+        val updatedAttributes = window.attributes.apply {
+            screenBrightness = brightness?.coerceIn(0f, 1f)
+                ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        }
+        window.attributes = updatedAttributes
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -219,6 +228,14 @@ class MainActivity : ComponentActivity() {
                 }.collect { (useHdrScreen, useP3) ->
                     applyPreferredWindowColorMode(useHdrScreen, useP3)
                     StartupTrace.mark("MainActivity.applyPreferredWindowColorMode applied: useHdrScreen=$useHdrScreen, useP3=$useP3")
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                cameraViewModel.windowScreenBrightness.collect { brightness ->
+                    applyWindowScreenBrightness(brightness)
                 }
             }
         }

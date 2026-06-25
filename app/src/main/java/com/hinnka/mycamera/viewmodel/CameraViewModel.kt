@@ -902,8 +902,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val shutterSoundEnabled: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.shutterSoundEnabled }
     val vibrationEnabled: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.vibrationEnabled }
     val keepScreenOn: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.keepScreenOn }
-    val captureScreenBrightness: StateFlow<Float?> = userPreferencesRepository.userPreferences
-        .map { it.captureScreenBrightness }
+    val windowScreenBrightness: StateFlow<Float?> = userPreferencesRepository.userPreferences
+        .map { it.windowScreenBrightness }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val volumeKeyAction: StateFlow<VolumeKeyAction> =
         userPreferencesRepository.userPreferences.map { it.volumeKeyAction }
@@ -3657,9 +3657,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun setCaptureScreenBrightness(value: Float?) {
+    fun setWindowScreenBrightness(value: Float?) {
         viewModelScope.launch {
-            userPreferencesRepository.saveCaptureScreenBrightness(value)
+            userPreferencesRepository.saveWindowScreenBrightness(value)
         }
     }
 

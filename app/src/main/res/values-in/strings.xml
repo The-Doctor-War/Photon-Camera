@@ -96,8 +96,8 @@
     <string name="settings_vibration_description">Bergetar saat mengambil foto</string>
     <string name="settings_keep_screen_on">Layar Tetap Menyala</string>
     <string name="settings_keep_screen_on_description">Menjaga layar tetap aktif saat menggunakan kamera. Perekaman video selalu membuatnya tetap aktif.</string>
-    <string name="settings_capture_screen_brightness">Kecerahan Layar Pemotretan</string>
-    <string name="settings_capture_screen_brightness_description">Atur kecerahan layar pemotretan. Matikan untuk memakai bawaan sistem.</string>
+    <string name="settings_window_screen_brightness">Kecerahan Layar</string>
+    <string name="settings_window_screen_brightness_description">Atur kecerahan layar untuk jendela aplikasi ini. Matikan untuk memakai bawaan sistem.</string>
     <string name="settings_volume_key_action">Aksi Tombol Volume</string>
     <string name="settings_volume_key_action_description">Pilih aksi tombol volume saat pengambilan</string>
     <string name="settings_volume_key_action_none">Kontrol Volume</string>
