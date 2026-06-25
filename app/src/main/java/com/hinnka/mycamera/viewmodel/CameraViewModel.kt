@@ -99,8 +99,12 @@ data class MultipleExposureSessionState(
         get() = capturedCount >= 2 && !isProcessing
 }
 
-private fun resolvePreviewBaselineTarget(useRaw: Boolean): BaselineColorCorrectionTarget? {
-    return if (useRaw) null else BaselineColorCorrectionTarget.JPG
+private fun resolvePreviewBaselineTarget(prefs: UserPreferences): BaselineColorCorrectionTarget? {
+    return when {
+        prefs.useRaw && prefs.tonemapMode == "LINEAR_PIPELINE" -> BaselineColorCorrectionTarget.RAW
+        prefs.useRaw -> null
+        else -> BaselineColorCorrectionTarget.JPG
+    }
 }
 
 private fun UserPreferences.getBaselineLutId(target: BaselineColorCorrectionTarget): String? {
@@ -778,7 +782,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     @OptIn(ExperimentalCoroutinesApi::class)
     val currentBaselineRecipeParams: StateFlow<ColorRecipeParams> =
         userPreferencesRepository.userPreferences.flatMapLatest { prefs ->
-            val target = resolvePreviewBaselineTarget(prefs.useRaw)
+            val target = resolvePreviewBaselineTarget(prefs)
             val lutId = target?.let { prefs.getBaselineLutId(it) }
             if (target == null || lutId == null) {
                 flowOf(ColorRecipeParams.DEFAULT)
@@ -1880,6 +1884,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             sharpening = sharpeningValue,
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
+            captureNoiseReductionLevel = state.value.nrLevel,
             rawDcpId = userPrefs?.rawDcpId,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
@@ -1941,7 +1946,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resolvePreviewBaselineLut(userPrefs: UserPreferences): LutConfig? {
-        val baselineLutId = resolvePreviewBaselineTarget(userPrefs.useRaw)
+        val baselineLutId = resolvePreviewBaselineTarget(userPrefs)
             ?.let { userPrefs.getBaselineLutId(it) }
         return baselineLutId?.let { contentRepository.lutManager.loadLut(it) }
     }
@@ -4194,6 +4199,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
+                captureNoiseReductionLevel = state.value.nrLevel,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -4362,6 +4368,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
+                captureNoiseReductionLevel = currentState.nrLevel,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -4505,6 +4512,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
+                    captureNoiseReductionLevel = currentState.nrLevel,
                     rawDcpId = userPrefs?.rawDcpId,
                     rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                     rawAutoExposure = effectiveRawAutoExposure,
@@ -4673,6 +4681,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
+                captureNoiseReductionLevel = state.value.nrLevel,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -5194,6 +5203,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             sharpening = sharpeningValue,
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
+            captureNoiseReductionLevel = state.value.nrLevel,
             rawDcpId = userPrefs?.rawDcpId,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,

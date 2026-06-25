@@ -7,6 +7,7 @@ import android.opengl.*
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
 import com.hinnka.mycamera.raw.ACR3Curve
 import com.hinnka.mycamera.raw.ColorSpace
+import com.hinnka.mycamera.raw.RawProfileExposureGl
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawShaders
 import com.hinnka.mycamera.raw.RawToneMappingGl
@@ -832,7 +833,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(program, "uExposureEv"),
-            rawPreviewExposureCompensation + engine.defaultExposureCompensationEv
+            0f
         )
         val blackPoint = rawPreviewBlackPointCorrection.coerceIn(0f, 0.99f)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uBlackPoint"), blackPoint)
@@ -866,7 +867,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, rawPreviewTextureIds[RAW_PREVIEW_INPUT_STAGE])
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uInputTexture"), 0)
         RawToneMappingGl.bindRawToneMappingUniforms(program, rawPreviewToneMappingParameters)
-        bindRawPreviewNeutralProfileUniforms(program)
+        bindRawPreviewProfileExposureUniforms(program, engine)
         bindRawPreviewDisabledDcpUniforms(program)
         bindRawPreviewColorTransforms(program, engine)
         if (engine == RawRenderingEngine.AdobeCurve) {
@@ -945,18 +946,12 @@ class LutRenderer : GLSurfaceView.Renderer {
         )
     }
 
-    private fun bindRawPreviewNeutralProfileUniforms(program: Int) {
-        uniform1f(program, "uProfileExposureLinearGain", 1f)
-        uniform1i(program, "uProfileExposureRampEnabled", 0)
-        uniform1f(program, "uProfileExposureRampSlope", 1f)
-        uniform1f(program, "uProfileExposureRampBlack", 0f)
-        uniform1f(program, "uProfileExposureRampRadius", 0f)
-        uniform1f(program, "uProfileExposureRampQScale", 0f)
-        uniform1i(program, "uProfileExposureToneEnabled", 0)
-        uniform1f(program, "uProfileExposureToneSlope", 1f)
-        uniform1f(program, "uProfileExposureToneA", 0f)
-        uniform1f(program, "uProfileExposureToneB", 1f)
-        uniform1f(program, "uProfileExposureToneC", 0f)
+    private fun bindRawPreviewProfileExposureUniforms(program: Int, engine: RawRenderingEngine) {
+        val exposure = RawProfileExposureGl.compute(
+            profileExposureCompensation = rawPreviewExposureCompensation + engine.defaultExposureCompensationEv,
+            useRamp = engine == RawRenderingEngine.AdobeCurve
+        )
+        RawProfileExposureGl.bindUniforms(program, exposure)
     }
 
     private fun bindRawPreviewDisabledDcpUniforms(program: Int) {

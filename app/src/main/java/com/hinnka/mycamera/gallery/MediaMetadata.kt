@@ -26,7 +26,7 @@ import kotlin.math.log2
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 21,
+    val version: Int = 22,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
@@ -40,6 +40,7 @@ data class MediaMetadata(
     val sharpening: Float? = null,
     val noiseReduction: Float? = null,
     val chromaNoiseReduction: Float? = null,
+    val captureNoiseReductionLevel: Int? = null,
     val rawDenoiseValue: Float? = null,
     val rawExposureCompensation: Float? = null,
     val rawAutoExposure: Boolean? = null,
@@ -182,6 +183,10 @@ data class MediaMetadata(
         }
     }
 
+    fun shouldApplyNaturalLightDefaultChromaDenoise(): Boolean {
+        return usesLinearPipelineToneMap() && captureNoiseReductionLevel in LOW_HARDWARE_NOISE_REDUCTION_LEVELS
+    }
+
     /**
      * 从 RawMetadata 补齐信息
      */
@@ -216,6 +221,7 @@ data class MediaMetadata(
 
     companion object {
         private const val TAG = "PhotoMetadata"
+        private val LOW_HARDWARE_NOISE_REDUCTION_LEVELS = setOf(0, 4)
 
         // 旧格式，以后不再更新
         fun fromLegacyJson(json: String): MediaMetadata? {
@@ -270,6 +276,7 @@ data class MediaMetadata(
                         .toFloat(),
                     chromaNoiseReduction = if (obj.isNull("chromaNoiseReduction")) null else obj.optDouble("chromaNoiseReduction")
                         .toFloat(),
+                    captureNoiseReductionLevel = if (obj.isNull("captureNoiseReductionLevel")) null else obj.optInt("captureNoiseReductionLevel"),
                     rawDenoiseValue = if (obj.isNull("denoiseValue")) null else obj.optDouble("denoiseValue").toFloat(),
                     rawExposureCompensation = if (obj.isNull("rawExposureCompensation")) null else obj.optDouble("rawExposureCompensation").toFloat(),
                     rawAutoExposure = if (obj.isNull("rawAutoExposure")) null else obj.optBoolean("rawAutoExposure"),

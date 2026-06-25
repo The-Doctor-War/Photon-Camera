@@ -646,6 +646,8 @@ class PhotoProcessor(
             finalNoiseReduction,
             finalChromaNoiseReduction,
             linearInputToneMap = metadata.usesLinearPipelineToneMap(),
+            linearInputExposureEv = metadata.rawExposureCompensation ?: 0f,
+            naturalLightDefaultChromaDenoise = metadata.shouldApplyNaturalLightDefaultChromaDenoise(),
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters
         )
@@ -676,6 +678,7 @@ class PhotoProcessor(
             lutConfig = null,
             colorRecipeParams = null,
             linearInputToneMap = true,
+            linearInputExposureEv = metadata.rawExposureCompensation ?: 0f,
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters
         )

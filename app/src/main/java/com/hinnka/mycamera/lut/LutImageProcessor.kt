@@ -14,6 +14,7 @@ import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
 import com.hinnka.mycamera.raw.ACR3Curve
 import com.hinnka.mycamera.raw.DenoiseProfileShaders
+import com.hinnka.mycamera.raw.RawProfileExposureGl
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawShaders
 import com.hinnka.mycamera.raw.RawToneMappingGl
@@ -307,6 +308,8 @@ class LutImageProcessor {
         chromaNoiseReductionValue: Float = 0f,
         lutMaskType: Int = 0,
         linearInputToneMap: Boolean = false,
+        linearInputExposureEv: Float = 0f,
+        naturalLightDefaultChromaDenoise: Boolean = false,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     ): Bitmap = withContext(glDispatcher) {
@@ -328,6 +331,11 @@ class LutImageProcessor {
         val sharpening: Float = sharpeningValue
         val noiseReduction: Float = noiseReductionValue
         val chromaNoiseReduction: Float = chromaNoiseReductionValue
+        val applyNaturalLightToneMap = linearInputToneMap && !isHlgInput
+        val preToneMapChromaDenoise = resolvePreToneMapChromaDenoise(
+            userStrength = chromaNoiseReduction,
+            applyNaturalLightDefault = applyNaturalLightToneMap && naturalLightDefaultChromaDenoise
+        )
 
         // 激活上下文
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
@@ -340,12 +348,12 @@ class LutImageProcessor {
         uploadImageTextureFromArgb(argbData, width, height)
         currentCoroutineContext().ensureActive()
 
-        if (chromaNoiseReduction > 0) {
-            renderBitmapChromaDenoise(imageTextureId, width, height, chromaNoiseReduction)
+        if (preToneMapChromaDenoise > 0) {
+            renderBitmapChromaDenoise(imageTextureId, width, height, preToneMapChromaDenoise)
             currentCoroutineContext().ensureActive()
         }
 
-        val chromaDenoisedTexId = if (chromaNoiseReduction > 0) bitmapDenoiseTexId[0] else imageTextureId
+        val chromaDenoisedTexId = if (preToneMapChromaDenoise > 0) bitmapDenoiseTexId[0] else imageTextureId
         if (noiseReduction > 0) {
             renderBitmapDenoiseProfile(chromaDenoisedTexId, width, height, noiseReduction)
             currentCoroutineContext().ensureActive()
@@ -362,9 +370,15 @@ class LutImageProcessor {
             chromaDenoisedTexId
         }
 
-        val applyNaturalLightToneMap = linearInputToneMap && !isHlgInput
         val renderInputTexId = if (applyNaturalLightToneMap) {
-            renderNaturalLightToneMap(inputTexId, width, height, rawRenderingEngine, rawToneMappingParameters)
+            renderNaturalLightToneMap(
+                inputTexId,
+                width,
+                height,
+                rawRenderingEngine,
+                rawToneMappingParameters,
+                linearInputExposureEv
+            )
         } else {
             inputTexId
         }
@@ -416,6 +430,8 @@ class LutImageProcessor {
         noiseReductionValue: Float = 0f,
         chromaNoiseReductionValue: Float = 0f,
         linearInputToneMap: Boolean = false,
+        linearInputExposureEv: Float = 0f,
+        naturalLightDefaultChromaDenoise: Boolean = false,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     ): Bitmap {
@@ -423,6 +439,7 @@ class LutImageProcessor {
         val hasCreative = creativeLayer?.lutConfig != null || creativeLayer?.colorRecipeParams != null
         return when {
             hasBaseline && hasCreative -> {
+                val runDenoiseBeforeNaturalLight = linearInputToneMap && !isHlgInput
                 val baseBitmap = applyLut(
                     argbData = argbData,
                     width = width,
@@ -431,7 +448,11 @@ class LutImageProcessor {
                     isHlgInput = isHlgInput,
                     lutConfig = baselineLayer.lutConfig,
                     colorRecipeParams = baselineLayer.colorRecipeParams,
+                    noiseReductionValue = if (runDenoiseBeforeNaturalLight) noiseReductionValue else 0f,
+                    chromaNoiseReductionValue = if (runDenoiseBeforeNaturalLight) chromaNoiseReductionValue else 0f,
                     linearInputToneMap = linearInputToneMap,
+                    linearInputExposureEv = linearInputExposureEv,
+                    naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                     rawRenderingEngine = rawRenderingEngine,
                     rawToneMappingParameters = rawToneMappingParameters,
                 )
@@ -440,8 +461,8 @@ class LutImageProcessor {
                     lutConfig = creativeLayer.lutConfig,
                     colorRecipeParams = creativeLayer.colorRecipeParams,
                     sharpeningValue = sharpeningValue,
-                    noiseReductionValue = noiseReductionValue,
-                    chromaNoiseReductionValue = chromaNoiseReductionValue
+                    noiseReductionValue = if (runDenoiseBeforeNaturalLight) 0f else noiseReductionValue,
+                    chromaNoiseReductionValue = if (runDenoiseBeforeNaturalLight) 0f else chromaNoiseReductionValue
                 )
             }
             hasBaseline -> applyLut(
@@ -456,6 +477,8 @@ class LutImageProcessor {
                 noiseReductionValue = noiseReductionValue,
                 chromaNoiseReductionValue = chromaNoiseReductionValue,
                 linearInputToneMap = linearInputToneMap,
+                linearInputExposureEv = linearInputExposureEv,
+                naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters
             )
@@ -471,6 +494,8 @@ class LutImageProcessor {
                 noiseReductionValue = noiseReductionValue,
                 chromaNoiseReductionValue = chromaNoiseReductionValue,
                 linearInputToneMap = linearInputToneMap,
+                linearInputExposureEv = linearInputExposureEv,
+                naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters
             )
@@ -497,6 +522,8 @@ class LutImageProcessor {
         chromaNoiseReductionValue: Float = 0f,
         lutMaskType: Int = 0,
         linearInputToneMap: Boolean = false,
+        linearInputExposureEv: Float = 0f,
+        naturalLightDefaultChromaDenoise: Boolean = false,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     ): Bitmap = withContext(glDispatcher) {
@@ -517,6 +544,11 @@ class LutImageProcessor {
         val sharpening: Float = sharpeningValue
         val noiseReduction: Float = noiseReductionValue
         val chromaNoiseReduction: Float = chromaNoiseReductionValue
+        val applyNaturalLightToneMap = linearInputToneMap && !isHlgInput
+        val preToneMapChromaDenoise = resolvePreToneMapChromaDenoise(
+            userStrength = chromaNoiseReduction,
+            applyNaturalLightDefault = applyNaturalLightToneMap && naturalLightDefaultChromaDenoise
+        )
 
         // 确保上下文激活
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
@@ -532,12 +564,12 @@ class LutImageProcessor {
         uploadImageTexture(bitmap)
         currentCoroutineContext().ensureActive()
 
-        if (chromaNoiseReduction > 0) {
-            renderBitmapChromaDenoise(imageTextureId, width, height, chromaNoiseReduction)
+        if (preToneMapChromaDenoise > 0) {
+            renderBitmapChromaDenoise(imageTextureId, width, height, preToneMapChromaDenoise)
             currentCoroutineContext().ensureActive()
         }
 
-        val chromaDenoisedTexId = if (chromaNoiseReduction > 0) bitmapDenoiseTexId[0] else imageTextureId
+        val chromaDenoisedTexId = if (preToneMapChromaDenoise > 0) bitmapDenoiseTexId[0] else imageTextureId
         if (noiseReduction > 0) {
             renderBitmapDenoiseProfile(chromaDenoisedTexId, width, height, noiseReduction)
             currentCoroutineContext().ensureActive()
@@ -553,9 +585,15 @@ class LutImageProcessor {
         } else {
             chromaDenoisedTexId
         }
-        val applyNaturalLightToneMap = linearInputToneMap && !isHlgInput
         val renderInputTexId = if (applyNaturalLightToneMap) {
-            renderNaturalLightToneMap(inputTexId, width, height, rawRenderingEngine, rawToneMappingParameters)
+            renderNaturalLightToneMap(
+                inputTexId,
+                width,
+                height,
+                rawRenderingEngine,
+                rawToneMappingParameters,
+                linearInputExposureEv
+            )
         } else {
             inputTexId
         }
@@ -604,6 +642,8 @@ class LutImageProcessor {
         noiseReductionValue: Float = 0f,
         chromaNoiseReductionValue: Float = 0f,
         linearInputToneMap: Boolean = false,
+        linearInputExposureEv: Float = 0f,
+        naturalLightDefaultChromaDenoise: Boolean = false,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     ): Bitmap {
@@ -611,12 +651,17 @@ class LutImageProcessor {
         val hasCreative = creativeLayer?.lutConfig != null || creativeLayer?.colorRecipeParams != null
         return when {
             hasBaseline && hasCreative -> {
+                val runDenoiseBeforeNaturalLight = linearInputToneMap && !isHlgInput
                 val baseBitmap = applyLut(
                     bitmap = bitmap,
                     isHlgInput = isHlgInput,
                     lutConfig = baselineLayer.lutConfig,
                     colorRecipeParams = baselineLayer.colorRecipeParams,
+                    noiseReductionValue = if (runDenoiseBeforeNaturalLight) noiseReductionValue else 0f,
+                    chromaNoiseReductionValue = if (runDenoiseBeforeNaturalLight) chromaNoiseReductionValue else 0f,
                     linearInputToneMap = linearInputToneMap,
+                    linearInputExposureEv = linearInputExposureEv,
+                    naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                     rawRenderingEngine = rawRenderingEngine,
                     rawToneMappingParameters = rawToneMappingParameters,
                 )
@@ -625,8 +670,8 @@ class LutImageProcessor {
                     lutConfig = creativeLayer.lutConfig,
                     colorRecipeParams = creativeLayer.colorRecipeParams,
                     sharpeningValue = sharpeningValue,
-                    noiseReductionValue = noiseReductionValue,
-                    chromaNoiseReductionValue = chromaNoiseReductionValue
+                    noiseReductionValue = if (runDenoiseBeforeNaturalLight) 0f else noiseReductionValue,
+                    chromaNoiseReductionValue = if (runDenoiseBeforeNaturalLight) 0f else chromaNoiseReductionValue
                 )
             }
             hasBaseline -> applyLut(
@@ -638,6 +683,8 @@ class LutImageProcessor {
                 noiseReductionValue = noiseReductionValue,
                 chromaNoiseReductionValue = chromaNoiseReductionValue,
                 linearInputToneMap = linearInputToneMap,
+                linearInputExposureEv = linearInputExposureEv,
+                naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters
             )
@@ -650,6 +697,8 @@ class LutImageProcessor {
                 noiseReductionValue = noiseReductionValue,
                 chromaNoiseReductionValue = chromaNoiseReductionValue,
                 linearInputToneMap = linearInputToneMap,
+                linearInputExposureEv = linearInputExposureEv,
+                naturalLightDefaultChromaDenoise = naturalLightDefaultChromaDenoise,
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters
             )
@@ -978,7 +1027,8 @@ class LutImageProcessor {
         width: Int,
         height: Int,
         engine: RawRenderingEngine,
-        toneMappingParameters: RawToneMappingParameters
+        toneMappingParameters: RawToneMappingParameters,
+        exposureCompensationEv: Float
     ): Int {
         val program = getOrCreateNaturalLightProgram(engine)
         if (program == 0) return inputTextureId
@@ -994,7 +1044,7 @@ class LutImageProcessor {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
         setUniform1i(program, "uInputTexture", 0)
         RawToneMappingGl.bindRawToneMappingUniforms(program, toneMappingParameters)
-        bindNaturalLightNeutralProfileUniforms(program)
+        bindNaturalLightProfileExposureUniforms(program, engine, exposureCompensationEv)
         bindNaturalLightDisabledDcpUniforms(program)
         bindNaturalLightColorTransforms(program, engine)
         if (engine == RawRenderingEngine.AdobeCurve) {
@@ -1140,18 +1190,16 @@ class LutImageProcessor {
         )
     }
 
-    private fun bindNaturalLightNeutralProfileUniforms(program: Int) {
-        setUniform1f(program, "uProfileExposureLinearGain", 1f)
-        setUniform1i(program, "uProfileExposureRampEnabled", 0)
-        setUniform1f(program, "uProfileExposureRampSlope", 1f)
-        setUniform1f(program, "uProfileExposureRampBlack", 0f)
-        setUniform1f(program, "uProfileExposureRampRadius", 0f)
-        setUniform1f(program, "uProfileExposureRampQScale", 0f)
-        setUniform1i(program, "uProfileExposureToneEnabled", 0)
-        setUniform1f(program, "uProfileExposureToneSlope", 1f)
-        setUniform1f(program, "uProfileExposureToneA", 0f)
-        setUniform1f(program, "uProfileExposureToneB", 1f)
-        setUniform1f(program, "uProfileExposureToneC", 0f)
+    private fun bindNaturalLightProfileExposureUniforms(
+        program: Int,
+        engine: RawRenderingEngine,
+        exposureCompensationEv: Float
+    ) {
+        val exposure = RawProfileExposureGl.compute(
+            profileExposureCompensation = exposureCompensationEv + engine.defaultExposureCompensationEv,
+            useRamp = engine == RawRenderingEngine.AdobeCurve
+        )
+        RawProfileExposureGl.bindUniforms(program, exposure)
     }
 
     private fun bindNaturalLightDisabledDcpUniforms(program: Int) {
@@ -1537,9 +1585,14 @@ class LutImageProcessor {
             return
         }
 
+        val preconditionTextureId = if (sourceTextureId == bitmapDenoiseTexId[0]) {
+            bitmapDenoiseTexId[1]
+        } else {
+            bitmapDenoiseTexId[0]
+        }
         val params = buildBitmapDenoiseParams(width, height, strength, force)
-        dispatchBitmapDenoisePreconditionV2(sourceTextureId, bitmapDenoiseTexId[0], width, height, params)
-        dispatchBitmapDenoiseNlm(sourceTextureId, bitmapDenoiseTexId[0], bitmapDenoiseTexId[1], width, height, params)
+        dispatchBitmapDenoisePreconditionV2(sourceTextureId, preconditionTextureId, width, height, params)
+        dispatchBitmapDenoiseNlm(sourceTextureId, preconditionTextureId, bitmapDenoiseTexId[1], width, height, params)
         checkGlError("renderBitmapDenoiseProfile")
     }
 
@@ -1547,13 +1600,15 @@ class LutImageProcessor {
         sourceTextureId: Int,
         width: Int,
         height: Int,
-        chromaNoiseReduction: Float
+        chromaNoiseReduction: Float,
+        targetIndex: Int = 0
     ) {
         setupBitmapDenoiseFramebuffers(width, height)
 
         val strength = chromaNoiseReduction.coerceIn(0f, 1f)
+        val target = targetIndex.coerceIn(0, bitmapDenoiseTexId.lastIndex)
         if (strength <= 0f || bitmapChromaDenoiseProgram == 0) {
-            renderTexturePassthrough(sourceTextureId, bitmapDenoiseFboId[0], width, height)
+            renderTexturePassthrough(sourceTextureId, bitmapDenoiseFboId[target], width, height)
             return
         }
 
@@ -1562,7 +1617,7 @@ class LutImageProcessor {
         val h = strength * strength * ChromaDenoiseShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
 
         GLES30.glUseProgram(bitmapChromaDenoiseProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bitmapDenoiseFboId[0])
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bitmapDenoiseFboId[target])
         GLES30.glViewport(0, 0, width, height)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
@@ -1587,6 +1642,17 @@ class LutImageProcessor {
         )
         drawQuad(bitmapChromaDenoiseProgram)
         checkGlError("renderBitmapChromaDenoise")
+    }
+
+    private fun resolvePreToneMapChromaDenoise(
+        userStrength: Float,
+        applyNaturalLightDefault: Boolean
+    ): Float {
+        return if (applyNaturalLightDefault) {
+            ChromaDenoiseDefaults.rawDefaultStrength(userStrength)
+        } else {
+            userStrength.coerceIn(0f, 1f)
+        }
     }
 
     private fun renderTexturePassthrough(sourceTextureId: Int, targetFboId: Int, width: Int, height: Int) {
