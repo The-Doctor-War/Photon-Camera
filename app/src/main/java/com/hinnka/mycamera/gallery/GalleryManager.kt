@@ -59,6 +59,7 @@ import java.nio.IntBuffer
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.io.copyTo
 import kotlin.io.deleteRecursively
 import kotlin.io.extension
@@ -149,6 +150,8 @@ object GalleryManager {
     @Volatile
     var hdrSdrRatio: Float = 0f
     private val detailHdrBuildJobs = ConcurrentHashMap<String, Job>()
+    private val detailHdrBuildGenerations = ConcurrentHashMap<String, AtomicLong>()
+    private val detailHdrPublishLock = Any()
     private val _detailHdrReadyEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val detailHdrReadyEvents: SharedFlow<String> = _detailHdrReadyEvents.asSharedFlow()
 
@@ -324,6 +327,18 @@ object GalleryManager {
         return (hdrWorkCounts[photoId] ?: 0) > 0
     }
 
+    private fun currentDetailHdrBuildGeneration(photoId: String): Long {
+        return detailHdrBuildGenerations[photoId]?.get() ?: 0L
+    }
+
+    private fun nextDetailHdrBuildGeneration(photoId: String): Long {
+        return detailHdrBuildGenerations.getOrPut(photoId) { AtomicLong(0L) }.incrementAndGet()
+    }
+
+    private fun isCurrentDetailHdrBuild(photoId: String, generation: Long): Boolean {
+        return currentDetailHdrBuildGeneration(photoId) == generation
+    }
+
     private suspend fun awaitDetailHdrBuildIdle(photoId: String) {
         val existingJob = detailHdrBuildJobs[photoId] ?: return
         if (!existingJob.isActive) return
@@ -335,10 +350,75 @@ object GalleryManager {
         val detailFile = getDetailHdrFile(context, photoId)
         val photoDir = getPhotoDir(context, photoId)
         val stableTimestamp = getOriginalImageFile(context, photoId)?.lastModified()
-        if (detailFile.exists()) {
-            detailFile.delete()
+        synchronized(detailHdrPublishLock) {
+            val generation = nextDetailHdrBuildGeneration(photoId)
+            if (detailFile.exists()) {
+                detailFile.delete()
+            }
+            stableTimestamp?.let { photoDir.setLastModified(it) }
+            PLog.d(TAG, "Invalidated detail HDR cache: $photoId generation=$generation")
         }
-        stableTimestamp?.let { photoDir.setLastModified(it) }
+    }
+
+    private fun deleteDetailHdrFileIfCurrent(
+        context: Context,
+        photoId: String,
+        expectedGeneration: Long,
+    ): Boolean {
+        val detailFile = getDetailHdrFile(context, photoId)
+        val photoDir = getPhotoDir(context, photoId)
+        val stableTimestamp = getOriginalImageFile(context, photoId)?.lastModified()
+        return synchronized(detailHdrPublishLock) {
+            if (!isCurrentDetailHdrBuild(photoId, expectedGeneration)) {
+                PLog.d(
+                    TAG,
+                    "Skip stale detail HDR delete: $photoId expected=$expectedGeneration current=${currentDetailHdrBuildGeneration(photoId)}"
+                )
+                return@synchronized false
+            }
+            val generation = nextDetailHdrBuildGeneration(photoId)
+            if (detailFile.exists()) {
+                detailFile.delete()
+            }
+            stableTimestamp?.let { photoDir.setLastModified(it) }
+            PLog.d(TAG, "Deleted detail HDR cache from current build: $photoId generation=$generation")
+            true
+        }
+    }
+
+    private fun publishDetailHdrFileIfCurrent(
+        context: Context,
+        photoId: String,
+        tempFile: File,
+        stableTimestamp: Long?,
+        expectedGeneration: Long,
+    ): Boolean {
+        val photoDir = getPhotoDir(context, photoId)
+        val detailFile = getDetailHdrFile(context, photoId)
+        return synchronized(detailHdrPublishLock) {
+            if (!isCurrentDetailHdrBuild(photoId, expectedGeneration)) {
+                tempFile.delete()
+                stableTimestamp?.let { photoDir.setLastModified(it) }
+                PLog.d(
+                    TAG,
+                    "Discarded stale detail HDR build: $photoId expected=$expectedGeneration current=${currentDetailHdrBuildGeneration(photoId)}"
+                )
+                return@synchronized false
+            }
+
+            if (detailFile.exists()) {
+                detailFile.delete()
+            }
+            val published = tempFile.renameTo(detailFile)
+            if (!published) {
+                tempFile.delete()
+            }
+            stableTimestamp?.let { photoDir.setLastModified(it) }
+            if (published) {
+                _detailHdrReadyEvents.tryEmit(photoId)
+            }
+            published
+        }
     }
 
     fun getVideoFile(context: Context, photoId: String): File {
@@ -577,18 +657,21 @@ object GalleryManager {
         quality: Int = 92,
         preparedUltraHdrSource: GainmapSourceSet? = null,
         preparedGainmapResult: GainmapResult? = null,
+        expectedGeneration: Long = currentDetailHdrBuildGeneration(photoId),
     ): Boolean = withContext(Dispatchers.IO) {
         beginHdrWork(photoId)
         try {
             val resolvedMetadata = metadata ?: loadMetadata(context, photoId) ?: return@withContext false
             if (!resolvedMetadata.manualHdrEffectEnabled) {
-                deleteDetailHdrFile(context, photoId)
+                deleteDetailHdrFileIfCurrent(context, photoId, expectedGeneration)
                 return@withContext false
             }
             val photoDir = getPhotoDir(context, photoId)
             val stableTimestamp = getOriginalImageFile(context, photoId)?.lastModified()
-            val detailFile = getDetailHdrFile(context, photoId)
-            val tempFile = File(detailFile.parentFile, "detail_hdr_temp.jpg")
+            val tempFile = File(
+                getDetailHdrFile(context, photoId).parentFile,
+                "detail_hdr_temp_${expectedGeneration}_${System.nanoTime()}.jpg"
+            )
 
             val photoProcessor = ContentRepository.getInstance(context).photoProcessor
             val ultraHdrSource = preparedUltraHdrSource ?: photoProcessor.prepareUltraHdrSource(
@@ -604,10 +687,7 @@ object GalleryManager {
             }
 
             if (ultraHdrSource == null) {
-                if (detailFile.exists()) {
-                    detailFile.delete()
-                }
-                stableTimestamp?.let { photoDir.setLastModified(it) }
+                deleteDetailHdrFileIfCurrent(context, photoId, expectedGeneration)
                 return@withContext false
             }
 
@@ -617,6 +697,15 @@ object GalleryManager {
             )
             if (preparedGainmapResult != null) {
                 PLog.d(TAG, "buildDetailHdrCache reused prepared gainmap for $photoId")
+            }
+            if (!isCurrentDetailHdrBuild(photoId, expectedGeneration)) {
+                tempFile.delete()
+                stableTimestamp?.let { photoDir.setLastModified(it) }
+                PLog.d(
+                    TAG,
+                    "Aborting stale detail HDR build before frame: $photoId expected=$expectedGeneration current=${currentDetailHdrBuildGeneration(photoId)}"
+                )
+                return@withContext false
             }
             val hdrOutput = photoProcessor.applyFrameForHdrOutput(
                 input = ultraHdrSource.sdrBase,
@@ -636,12 +725,16 @@ object GalleryManager {
                 }
             }
 
-            if (detailFile.exists()) {
-                detailFile.delete()
+            if (!publishDetailHdrFileIfCurrent(
+                    context = context,
+                    photoId = photoId,
+                    tempFile = tempFile,
+                    stableTimestamp = stableTimestamp,
+                    expectedGeneration = expectedGeneration
+                )
+            ) {
+                return@withContext false
             }
-            tempFile.renameTo(detailFile)
-            stableTimestamp?.let { photoDir.setLastModified(it) }
-            _detailHdrReadyEvents.tryEmit(photoId)
             PLog.d(
                 TAG,
                 "buildDetailHdrCache success: $photoId, source=${ultraHdrSource.sourceKind}, gainmap=${hdrOutput.gainmapResult != null}"
@@ -664,6 +757,7 @@ object GalleryManager {
         chromaNoiseReduction: Float = 0f
     ) {
         val existingJob = detailHdrBuildJobs[photoId]
+        val generation = nextDetailHdrBuildGeneration(photoId)
         val job = processingScope.launch {
             try {
                 existingJob?.join()
@@ -673,13 +767,15 @@ object GalleryManager {
                     metadata = metadata,
                     sharpening = sharpening,
                     noiseReduction = noiseReduction,
-                    chromaNoiseReduction = chromaNoiseReduction
+                    chromaNoiseReduction = chromaNoiseReduction,
+                    expectedGeneration = generation
                 )
             } finally {
                 detailHdrBuildJobs.remove(photoId, coroutineContext[Job])
             }
         }
         detailHdrBuildJobs[photoId] = job
+        PLog.d(TAG, "Queued detail HDR build: $photoId generation=$generation")
     }
 
     private suspend fun resolvePhotoExportDestination(context: Context): PhotoExportDestination {
