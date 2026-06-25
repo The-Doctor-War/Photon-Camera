@@ -48,7 +48,7 @@ fun CameraParameterBarVerticel(
             label = "Tv",
             value = tvValue,
             labelColor = yellow,
-            valueColor = if (state.shutterSpeed > 1_000_000_000.0 / 15) Color.Red else null,
+            valueColor = if (state.isPreviewExposureLimited()) Color.Red else null,
             isSelected = selectedParameter == CameraParameter.SHUTTER_SPEED,
             isEnabled = true,
             onClick = { onParameterClick(CameraParameter.SHUTTER_SPEED) }

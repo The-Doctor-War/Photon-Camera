@@ -361,6 +361,11 @@ data class CameraState(
     val videoCapabilities: VideoCapabilities = VideoCapabilities(),
     val videoRecordingState: VideoRecordingState = VideoRecordingState(),
 ) {
+    companion object {
+        const val MAX_PHOTO_PREVIEW_SHUTTER_SPEED_NS = 1_000_000_000L / 15
+        const val MAX_VIDEO_MANUAL_SHUTTER_SPEED_NS = 1_000_000_000L / 6
+    }
+
     /**
      * 是否全自动曝光
      */
@@ -400,6 +405,28 @@ data class CameraState(
      */
     fun getShutterSpeedRange(): Range<Long> {
         return getCurrentCameraInfo()?.exposureTimeRange ?: Range(1_000_000L, 1_000_000_000L)
+    }
+
+    fun getManualShutterSpeedRange(): Range<Long> {
+        val sensorRange = getShutterSpeedRange()
+        val upper = when (captureMode) {
+            CaptureMode.VIDEO -> sensorRange.upper.coerceAtMost(MAX_VIDEO_MANUAL_SHUTTER_SPEED_NS)
+            CaptureMode.PHOTO,
+            CaptureMode.QUICK_SHOT -> sensorRange.upper
+        }.coerceAtLeast(sensorRange.lower)
+        return Range(sensorRange.lower, upper)
+    }
+
+    fun getPreviewExposureTimeLimitNs(): Long {
+        return when (captureMode) {
+            CaptureMode.VIDEO -> MAX_VIDEO_MANUAL_SHUTTER_SPEED_NS
+            CaptureMode.PHOTO,
+            CaptureMode.QUICK_SHOT -> MAX_PHOTO_PREVIEW_SHUTTER_SPEED_NS
+        }
+    }
+
+    fun isPreviewExposureLimited(): Boolean {
+        return shutterSpeed >= getPreviewExposureTimeLimitNs()
     }
 
     /**

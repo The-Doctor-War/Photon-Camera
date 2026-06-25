@@ -72,10 +72,6 @@ class Camera2Controller(private val context: Context) {
     companion object {
         private const val TAG = "Camera2Controller"
 
-        // 预览时的最大曝光时间（纳秒）：1/15秒 = 66ms
-        // 超过这个时间会导致预览帧率过低，画面卡顿
-        private const val MAX_PREVIEW_EXPOSURE_TIME = 66_000_000L // 66ms
-
         // 自定义错误代码
         const val ERROR_CAMERA_DISCONNECTED = 1000
 
@@ -1270,7 +1266,7 @@ class Camera2Controller(private val context: Context) {
             // 预览流的曝光时间被帧率限制了（比如最长只能 33ms）
             // 但实际拍摄参数可能是 100ms。我们需要推算“如果预览流能曝光 100ms，亮度会是多少”
             val currentShutter = currentState.shutterSpeed
-            val clampedPreviewTime = currentShutter.coerceAtMost(MAX_PREVIEW_EXPOSURE_TIME)
+            val clampedPreviewTime = currentShutter.coerceAtMost(getMaxPreviewExposureTime(currentState))
 
             // 补偿系数：如果当前设定快门是 66ms，预览限制是 33ms，那么真实亮度应该是预览亮度的 2 倍
             val exposureRatio = currentShutter.toDouble() / clampedPreviewTime.toDouble()
@@ -1318,7 +1314,7 @@ class Camera2Controller(private val context: Context) {
             } else {
                 // 快门优先模式：ISO 固定，调快门
                 val calculatedShutter = (currentState.shutterSpeed * correctionFactor).toLong()
-                val range = currentState.getShutterSpeedRange()
+                val range = currentState.getManualShutterSpeedRange()
                 val clampedShutter = calculatedShutter.coerceIn(range.lower, range.upper)
 
                 if (abs(clampedShutter - currentState.shutterSpeed) > currentState.shutterSpeed * 0.05) {
@@ -1901,6 +1897,19 @@ class Camera2Controller(private val context: Context) {
             ?: availableAfModes.first()
     }
 
+    private fun getMaxPreviewExposureTime(state: CameraState): Long {
+        return state.getPreviewExposureTimeLimitNs()
+    }
+
+    private fun coerceManualShutterSpeed(state: CameraState, value: Long): Long {
+        val range = state.getManualShutterSpeedRange()
+        return value.coerceIn(range.lower, range.upper)
+    }
+
+    private fun coercePreviewExposureTime(state: CameraState): Long {
+        return state.shutterSpeed.coerceAtMost(getMaxPreviewExposureTime(state))
+    }
+
     /**
      * 应用曝光设置
      *
@@ -1954,7 +1963,7 @@ class Camera2Controller(private val context: Context) {
                 val exposureTime = if (isCapture) {
                     state.shutterSpeed
                 } else {
-                    state.shutterSpeed.coerceAtMost(MAX_PREVIEW_EXPOSURE_TIME)
+                    coercePreviewExposureTime(state)
                 }
                 builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTime)
             }
@@ -2474,7 +2483,7 @@ class Camera2Controller(private val context: Context) {
         val exposureTimeNs = if (isCapture) {
             state.shutterSpeed
         } else {
-            state.shutterSpeed.coerceAtMost(MAX_PREVIEW_EXPOSURE_TIME)
+            coercePreviewExposureTime(state)
         }
         val exposureTimeSeconds = exposureTimeNs / 1_000_000_000.0
         val iso = state.iso.coerceAtLeast(1).toDouble()
@@ -2717,13 +2726,12 @@ class Camera2Controller(private val context: Context) {
     /**
      * 设置快门速度
      *
-     * 注意：预览时会限制最大曝光时间为 1/15秒，防止画面卡死
-     * 拍摄时会使用完整的用户设置
+     * 注意：照片预览会限制最大曝光时间为 1/15 秒，视频模式限制为 1/6 秒
+     * 照片拍摄请求会使用完整的用户设置
      */
     fun setShutterSpeed(value: Long) {
         val currentState = _state.value
-        val range = currentState.getShutterSpeedRange()
-        val clampedValue = value.coerceIn(range.lower, range.upper)
+        val clampedValue = coerceManualShutterSpeed(currentState, value)
 
         val evStep = currentState.getExposureCompensationStep()
         val sliderBias = currentState.exposureCompensation * evStep
@@ -3754,7 +3762,13 @@ class Camera2Controller(private val context: Context) {
             videoConfig = nextVideoConfig,
             countdownValue = 0,
             isCapturingLivePhoto = false
-        )
+        ).let { state ->
+            if (mode == CaptureMode.VIDEO) {
+                state.copy(shutterSpeed = coerceManualShutterSpeed(state, state.shutterSpeed))
+            } else {
+                state
+            }
+        }
         _state.value = nextState
         if (mode == CaptureMode.VIDEO) {
             livePhotoRecorder.stopRecording()
