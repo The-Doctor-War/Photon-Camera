@@ -123,6 +123,7 @@ data class UserPreferences(
     val shutterSoundEnabled: Boolean = true,  // 快门声音
     val vibrationEnabled: Boolean = true,  // 拍摄震动
     val keepScreenOn: Boolean = false,  // 屏幕常亮
+    val captureScreenBrightness: Float? = null,  // 拍摄界面屏幕亮度，null 表示使用系统默认
     val volumeKeyAction: VolumeKeyAction = VolumeKeyAction.CAPTURE,  // 音量键操作
     val autoSaveAfterCapture: Boolean = true,  // 自动保存
     val photoSavePath: PhotoSavePath = PhotoSavePath.DCIM_PHOTON,
@@ -296,6 +297,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val SHUTTER_SOUND_ENABLED = booleanPreferencesKey("shutter_sound_enabled")
         private val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         private val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        private val CAPTURE_SCREEN_BRIGHTNESS = floatPreferencesKey("capture_screen_brightness")
         private val VOLUME_KEY_ACTION = stringPreferencesKey("volume_key_action")
         private val AUTO_SAVE_AFTER_CAPTURE = booleanPreferencesKey("auto_save_after_capture")
         private val PHOTO_SAVE_PATH = stringPreferencesKey("photo_save_path")
@@ -461,6 +463,7 @@ class UserPreferencesRepository(private val context: Context) {
                 shutterSoundEnabled = preferences[SHUTTER_SOUND_ENABLED] ?: true,
                 vibrationEnabled = preferences[VIBRATION_ENABLED] ?: true,
                 keepScreenOn = preferences[KEEP_SCREEN_ON] ?: false,
+                captureScreenBrightness = preferences[CAPTURE_SCREEN_BRIGHTNESS]?.coerceIn(0f, 1f),
                 volumeKeyAction = VolumeKeyAction.valueOf(
                     preferences[VOLUME_KEY_ACTION] ?: VolumeKeyAction.CAPTURE.name
                 ),
@@ -1056,6 +1059,19 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveKeepScreenOn(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEEP_SCREEN_ON] = enabled
+        }
+    }
+
+    /**
+     * 保存拍摄界面屏幕亮度，null 表示使用系统默认亮度
+     */
+    suspend fun saveCaptureScreenBrightness(value: Float?) {
+        context.dataStore.edit { preferences ->
+            if (value == null) {
+                preferences.remove(CAPTURE_SCREEN_BRIGHTNESS)
+            } else {
+                preferences[CAPTURE_SCREEN_BRIGHTNESS] = value.coerceIn(0f, 1f)
+            }
         }
     }
 

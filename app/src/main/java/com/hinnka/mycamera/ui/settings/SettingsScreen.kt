@@ -248,6 +248,7 @@ fun SettingsScreen(
     val shutterSoundEnabled by viewModel.shutterSoundEnabled.collectAsState(initial = true)
     val vibrationEnabled by viewModel.vibrationEnabled.collectAsState(initial = true)
     val keepScreenOn by viewModel.keepScreenOn.collectAsState(initial = false)
+    val captureScreenBrightness by viewModel.captureScreenBrightness.collectAsState()
     val volumeKeyAction by viewModel.volumeKeyAction.collectAsState()
     val topSheetAspectRatios by viewModel.topSheetAspectRatios.collectAsState()
     val customAspectRatios by viewModel.customAspectRatios.collectAsState()
@@ -342,6 +343,8 @@ fun SettingsScreen(
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
     var rawToneMappingParametersUi by remember { mutableStateOf(rawToneMappingParameters) }
     var aiFocusScoreThresholdUi by remember(aiFocusScoreThreshold) { mutableStateOf(aiFocusScoreThreshold) }
+    var captureScreenBrightnessUi by remember { mutableStateOf(captureScreenBrightness ?: 1f) }
+    var captureScreenBrightnessEnabled by remember { mutableStateOf(captureScreenBrightness != null) }
     var showAspectRatioDialog by remember { mutableStateOf(false) }
     var showAddIszLensDialog by remember { mutableStateOf(false) }
     var backupOperation by remember { mutableStateOf<BackupOperation?>(null) }
@@ -387,6 +390,13 @@ fun SettingsScreen(
     LaunchedEffect(tonemapMode, settingsTonemapMode) {
         if (settingsTonemapMode != tonemapMode) {
             applyTonemapMode(settingsTonemapMode)
+        }
+    }
+
+    LaunchedEffect(captureScreenBrightness) {
+        captureScreenBrightnessEnabled = captureScreenBrightness != null
+        captureScreenBrightness?.let {
+            captureScreenBrightnessUi = it
         }
     }
 
@@ -1971,6 +1981,35 @@ fun SettingsScreen(
                             description = stringResource(R.string.settings_keep_screen_on_description),
                             checked = keepScreenOn,
                             onCheckedChange = { viewModel.setKeepScreenOn(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        SliderSettingItem(
+                            title = stringResource(R.string.settings_capture_screen_brightness),
+                            description = stringResource(R.string.settings_capture_screen_brightness_description),
+                            value = captureScreenBrightnessUi,
+                            valueRange = 0f..1f,
+                            onValueChange = {
+                                captureScreenBrightnessUi = it.coerceIn(0f, 1f)
+                            },
+                            onValueChangeFinished = {
+                                if (captureScreenBrightnessEnabled) {
+                                    viewModel.setCaptureScreenBrightness(captureScreenBrightnessUi)
+                                }
+                            },
+                            valueTextFormatter = { String.format("%.2f", it) },
+                            resetValue = 1f,
+                            toggleValue = captureScreenBrightnessEnabled,
+                            onToggleChange = { enabled ->
+                                captureScreenBrightnessEnabled = enabled
+                                viewModel.setCaptureScreenBrightness(
+                                    if (enabled) captureScreenBrightnessUi else null
+                                )
+                            }
                         )
 
                         HorizontalDivider(

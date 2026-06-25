@@ -168,6 +168,7 @@ fun CameraScreen(
     val showLevelIndicator by viewModel.showLevelIndicator.collectAsState(initial = false)
     val focusPeakingEnabled by viewModel.focusPeakingEnabled.collectAsState(initial = true)
     val keepScreenOn by viewModel.keepScreenOn.collectAsState(initial = false)
+    val captureScreenBrightness by viewModel.captureScreenBrightness.collectAsState()
     val currentLutId by viewModel.currentLutId.collectAsState()
     val currentRecipeParams by viewModel.currentRecipeParams.collectAsState()
     val lutSelectorMode by viewModel.lutSelectorMode.collectAsState()
@@ -492,6 +493,16 @@ fun CameraScreen(
 
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    LaunchedEffect(activity, captureScreenBrightness) {
+        activity?.applyCaptureScreenBrightness(captureScreenBrightness)
+    }
+
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.applyCaptureScreenBrightness(null)
         }
     }
 
@@ -2199,4 +2210,12 @@ private fun Context.findActivity(): Activity? {
         context = context.baseContext
     }
     return null
+}
+
+private fun Activity.applyCaptureScreenBrightness(brightness: Float?) {
+    val updatedAttributes = window.attributes.apply {
+        screenBrightness = brightness?.coerceIn(0f, 1f)
+            ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
+    window.attributes = updatedAttributes
 }

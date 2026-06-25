@@ -96,6 +96,8 @@
     <string name="settings_vibration_description">Vibrer lors de la prise de vue</string>
     <string name="settings_keep_screen_on">Garder l\'écran allumé</string>
     <string name="settings_keep_screen_on_description">Garde l\'écran actif pendant l\'utilisation de l\'appareil photo. L\'enregistrement vidéo le garde toujours actif.</string>
+    <string name="settings_capture_screen_brightness">Luminosité de l\'écran de prise de vue</string>
+    <string name="settings_capture_screen_brightness_description">Définit la luminosité de l\'écran de prise de vue. Désactivez pour utiliser la valeur par défaut du système.</string>
     <string name="settings_volume_key_action">Action des touches de volume</string>
     <string name="settings_volume_key_action_description">Choisissez l\'action des touches de volume pendant la capture</string>
     <string name="settings_volume_key_action_none">Contrôle du volume</string>
