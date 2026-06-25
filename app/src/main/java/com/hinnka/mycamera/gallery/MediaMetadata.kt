@@ -26,7 +26,7 @@ import kotlin.math.log2
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 22,
+    val version: Int = 23,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
@@ -49,6 +49,7 @@ data class MediaMetadata(
     val rawBlackPointCorrection: Float? = null,
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
+    val rawLensShadingCorrectionEnabled: Boolean? = null,
     val rawDcpId: String? = null,
     val rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
     val rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
@@ -285,6 +286,7 @@ data class MediaMetadata(
                     rawBlackPointCorrection = if (obj.isNull("rawBlackPointCorrection")) null else obj.optDouble("rawBlackPointCorrection").toFloat(),
                     rawWhitePointCorrection = if (obj.isNull("rawWhitePointCorrection")) null else obj.optDouble("rawWhitePointCorrection").toFloat(),
                     rawAutoWhiteBalanceEstimate = if (obj.isNull("rawAutoWhiteBalanceEstimate")) null else obj.optBoolean("rawAutoWhiteBalanceEstimate"),
+                    rawLensShadingCorrectionEnabled = if (obj.isNull("rawLensShadingCorrectionEnabled")) null else obj.optBoolean("rawLensShadingCorrectionEnabled"),
                     rawDcpId = if (obj.isNull("rawDcpId")) null else obj.optString("rawDcpId"),
                     rawRenderingEngine = RawRenderingEngine.fromPersistedName(
                         if (obj.isNull("rawColorEngine")) null else obj.optString("rawColorEngine"),

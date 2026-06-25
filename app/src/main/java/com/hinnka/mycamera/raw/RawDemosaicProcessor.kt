@@ -444,6 +444,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
+        applyLensShadingCorrection: Boolean = true,
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
@@ -481,6 +482,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
+                applyLensShadingCorrection = applyLensShadingCorrection,
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawWhiteLevelMode = rawWhiteLevelMode,
@@ -525,6 +527,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
+        applyLensShadingCorrection: Boolean = true,
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -561,6 +564,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
+                applyLensShadingCorrection = applyLensShadingCorrection,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -592,6 +596,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
+        applyLensShadingCorrection: Boolean = true,
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
@@ -629,6 +634,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
+                applyLensShadingCorrection = applyLensShadingCorrection,
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawWhiteLevelMode = rawWhiteLevelMode,
@@ -675,6 +681,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
+        applyLensShadingCorrection: Boolean = true,
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
@@ -754,6 +761,18 @@ class RawDemosaicProcessor {
         if (actualRawData == null || actualMetadata == null) {
             PLog.e(TAG, "Missing source data or metadata")
             return@withContext null
+        }
+
+        if (!applyLensShadingCorrection) {
+            if (hasValidLensShadingMap(actualMetadata)) {
+                PLog.d(TAG, "RAW lens shading correction disabled by user preference")
+            }
+            actualMetadata = actualMetadata.copy(
+                lensShadingMap = null,
+                lensShadingMapWidth = 0,
+                lensShadingMapHeight = 0,
+                lensShadingMapGrid = null
+            )
         }
 
         val resolvedDcpRenderPlan = resolveRawDcpRenderPlan(

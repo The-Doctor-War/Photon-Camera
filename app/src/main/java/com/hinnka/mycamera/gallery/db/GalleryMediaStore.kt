@@ -212,6 +212,7 @@ object GalleryMediaStore {
             rawBlackPointCorrection = metadata.rawBlackPointCorrection,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection,
             rawAutoWhiteBalanceEstimate = metadata.rawAutoWhiteBalanceEstimate,
+            rawLensShadingCorrectionEnabled = metadata.rawLensShadingCorrectionEnabled,
             rawDcpId = metadata.rawDcpId,
             rawColorEngine = metadata.rawRenderingEngine.name,
             rawAgxBlackRelativeExposure = metadata.rawToneMappingParameters.agxBlackRelativeExposure,
@@ -382,6 +383,7 @@ object GalleryMediaStore {
             rawBlackPointCorrection = rawBlackPointCorrection,
             rawWhitePointCorrection = rawWhitePointCorrection,
             rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
+            rawLensShadingCorrectionEnabled = rawLensShadingCorrectionEnabled,
             rawDcpId = rawDcpId,
             rawRenderingEngine = RawRenderingEngine.fromPersistedName(
                 rawColorEngine,

@@ -320,6 +320,7 @@ fun SettingsScreen(
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
     val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
+    val rawLensShadingCorrectionEnabled by viewModel.rawLensShadingCorrectionEnabled.collectAsState()
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
     val rawWhiteLevelMode by viewModel.rawWhiteLevelMode.collectAsState()
@@ -1668,6 +1669,18 @@ fun SettingsScreen(
                         },
                         currentLevel = rawMinShutterSpeedNs,
                         onLevelSelected = { viewModel.setRawMinShutterSpeedNs(it) }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = Color.White.copy(alpha = 0.1f)
+                    )
+
+                    SwitchSettingItem(
+                        title = stringResource(R.string.settings_raw_lens_shading_correction),
+                        description = stringResource(R.string.settings_raw_lens_shading_correction_description),
+                        checked = rawLensShadingCorrectionEnabled,
+                        onCheckedChange = { viewModel.setRawLensShadingCorrectionEnabled(it) }
                     )
 
                     HorizontalDivider(

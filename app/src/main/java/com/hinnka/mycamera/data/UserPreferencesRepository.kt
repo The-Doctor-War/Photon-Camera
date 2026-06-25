@@ -108,6 +108,7 @@ data class UserPreferences(
     val rawBlackPointCorrection: Float = 0f,
     val rawWhitePointCorrection: Float = 0f,
     val rawAutoWhiteBalanceEstimate: Boolean = false,
+    val rawLensShadingCorrectionEnabled: Boolean = true,
     val rawBlackLevelModes: Map<String, String> = emptyMap(),
     val rawCustomBlackLevels: Map<String, Float> = emptyMap(),
     val rawWhiteLevelModes: Map<String, String> = emptyMap(),
@@ -306,6 +307,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val EDGE_LEVEL = intPreferencesKey("edge_level")
         private val VENDOR_CAPTURE_SETTINGS = stringPreferencesKey("vendor_capture_settings")
         private val USE_RAW = booleanPreferencesKey("use_raw")
+        private val RAW_LENS_SHADING_CORRECTION_ENABLED = booleanPreferencesKey("raw_lens_shading_correction_enabled")
         private val METERING_MODE = stringPreferencesKey("metering_mode")
 
         // 软件处理参数 Keys
@@ -445,6 +447,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawBlackPointCorrection = preferences[RAW_BLACK_POINT_CORRECTION_KEY] ?: 0f,
                 rawWhitePointCorrection = preferences[RAW_WHITE_POINT_CORRECTION_KEY] ?: 0f,
                 rawAutoWhiteBalanceEstimate = preferences[RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY] ?: false,
+                rawLensShadingCorrectionEnabled = preferences[RAW_LENS_SHADING_CORRECTION_ENABLED] ?: true,
                 rawBlackLevelModes = parseMapString(preferences[RAW_BLACK_LEVEL_MODES_KEY]),
                 rawCustomBlackLevels = parseMapFloat(preferences[RAW_CUSTOM_BLACK_LEVELS_KEY]),
                 rawWhiteLevelModes = parseMapString(preferences[RAW_WHITE_LEVEL_MODES_KEY]),
@@ -935,6 +938,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveRawAutoWhiteBalanceEstimate(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY] = enabled
+        }
+    }
+
+    suspend fun saveRawLensShadingCorrectionEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[RAW_LENS_SHADING_CORRECTION_ENABLED] = enabled
         }
     }
 

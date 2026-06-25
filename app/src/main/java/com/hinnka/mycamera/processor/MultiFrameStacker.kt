@@ -233,6 +233,7 @@ object MultiFrameStacker {
         lensShading: FloatArray? = null,
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
+        applyLensShadingCorrection: Boolean = true,
     ): RawStackResult? {
         val width = images[0].width
         val height = images[0].height
@@ -246,6 +247,7 @@ object MultiFrameStacker {
 
         if (useGpuAcceleration && !enableSuperResolution) {
             PLog.i(TAG, "Using GLES RAW stacker")
+            val stackLensShading = lensShading.takeIf { applyLensShadingCorrection }
             return GlesRawStacker(
                 width = width,
                 height = height,
@@ -253,9 +255,9 @@ object MultiFrameStacker {
                 blackLevel = masterBlackLevel,
                 whiteLevel = whiteLevel,
                 noiseModel = noiseModel,
-                lensShading = lensShading,
-                lensShadingWidth = lensShadingWidth,
-                lensShadingHeight = lensShadingHeight,
+                lensShading = stackLensShading,
+                lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
+                lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
             ).process(images)
         } else if (useGpuAcceleration && enableSuperResolution) {
             PLog.w(TAG, "GLES RAW stacker does not support SR; falling back to CPU RAW stacker")
@@ -324,6 +326,7 @@ object MultiFrameStacker {
         lensShading: FloatArray? = null,
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
+        applyLensShadingCorrection: Boolean = true,
     ): RawStackResult? {
         if (normalFrames.isEmpty()) {
             shortFrame.image.close()
@@ -340,6 +343,7 @@ object MultiFrameStacker {
             PLog.w(TAG, "RAW HDR denoise stack requires GLES; GPU acceleration setting is ignored")
         }
         PLog.i(TAG, "Using GLES RAW HDR stacker")
+        val stackLensShading = lensShading.takeIf { applyLensShadingCorrection }
         return GlesRawStacker(
             width = width,
             height = height,
@@ -347,9 +351,9 @@ object MultiFrameStacker {
             blackLevel = masterBlackLevel,
             whiteLevel = whiteLevel,
             noiseModel = noiseModel,
-            lensShading = lensShading,
-            lensShadingWidth = lensShadingWidth,
-            lensShadingHeight = lensShadingHeight,
+            lensShading = stackLensShading,
+            lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
+            lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
         ).processHdr(
             shortFrame = GlesRawStacker.HdrInputFrame(shortFrame.image, shortFrame.exposureProduct),
             normalFrames = normalFrames.map { GlesRawStacker.HdrInputFrame(it.image, it.exposureProduct) },

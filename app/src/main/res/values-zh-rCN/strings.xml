@@ -736,6 +736,8 @@
     <string name="settings_raw_dro_description">在高光比场景中，智能提升阴影细节并保护高光。</string>
     <string name="settings_raw_black_point_correction">黑点校正</string>
     <string name="settings_raw_white_point_correction">白点校正</string>
+    <string name="settings_raw_lens_shading_correction">镜头阴影校正</string>
+    <string name="settings_raw_lens_shading_correction_description">RAW 显影时应用镜头阴影增益图，包括 RAW 多帧和 RAW HDR 处理。</string>
     <string name="settings_export_dng_with_raw_export">导出 RAW 时同时导出 DNG</string>
     <string name="settings_export_dng_with_raw_export_description">导出 RAW 照片时，同时将对应的原始 DNG 文件导出到系统相册。</string>
     <string name="settings_raw_black_level_correction">黑电平校正</string>

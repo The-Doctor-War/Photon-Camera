@@ -68,6 +68,11 @@ class PhotoProcessor(
             ?: (userPreferencesRepository.userPreferences.firstOrNull()?.rawAutoWhiteBalanceEstimate ?: false)
     }
 
+    private suspend fun resolveRawLensShadingCorrectionEnabled(metadata: MediaMetadata): Boolean {
+        return metadata.rawLensShadingCorrectionEnabled
+            ?: (userPreferencesRepository.userPreferences.firstOrNull()?.rawLensShadingCorrectionEnabled ?: true)
+    }
+
     private suspend fun resolveRawAutoExposure(metadata: MediaMetadata): Boolean {
         return metadata.rawAutoExposure
             ?: (userPreferencesRepository.userPreferences.firstOrNull()?.rawAutoExposure ?: true)
@@ -348,6 +353,7 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
+            applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(metadata),
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
@@ -424,6 +430,7 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
+            applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(metadata),
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
