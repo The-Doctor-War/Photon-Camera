@@ -91,6 +91,7 @@ import com.hinnka.mycamera.lut.VideoLutEffect
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
+import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 
 private data class PreviewRenderSignature(
     val photoId: String,
@@ -1534,6 +1535,7 @@ private fun ZoomableEditImage(
             contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
             state = zoomableState,
+            onDoubleClick = DoubleClickToZoomListener.cycle(maxZoomFactor = 3f),
             modifier = Modifier.fillMaxSize()
         )
     }

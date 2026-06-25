@@ -79,6 +79,7 @@ import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
 import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import kotlinx.coroutines.withContext
+import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import java.io.File
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -1623,6 +1624,7 @@ private fun ZoomableImage(
                 contentDescription = photo.displayName,
                 contentScale = ContentScale.Fit,
                 state = zoomableState,
+                onDoubleClick = DoubleClickToZoomListener.cycle(maxZoomFactor = 3f),
                 modifier = Modifier.fillMaxSize().autoRotate(matchParentSize = true)
             )
         }
