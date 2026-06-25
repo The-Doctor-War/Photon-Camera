@@ -1355,6 +1355,8 @@ fun CameraScreen(
             useRaw = useRaw && state.isRawSupported,
             onRawToggle = { viewModel.setUseRaw(it) },
             isRawSupported = state.isRawSupported,
+            useNaturalLight = tonemapMode == "LINEAR_PIPELINE",
+            onNaturalLightToggle = { viewModel.setNaturalLightToneMapEnabled(it) },
             rawDcpId = rawDcpId,
             availableDcps = viewModel.availableDcps,
             rawBaselineLutId = rawBaselineLutId,
@@ -1402,10 +1404,6 @@ fun CameraScreen(
             onFrameManageClick = {
                 activePanel = ActivePanel.NONE
                 onFrameManagementClick()
-            },
-            onPresetManageClick = {
-                activePanel = ActivePanel.NONE
-                onPresetManagementClick()
             },
             onToolboxClick = {
                 activePanel = ActivePanel.NONE

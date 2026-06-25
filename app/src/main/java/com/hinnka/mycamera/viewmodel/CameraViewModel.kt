@@ -99,9 +99,23 @@ data class MultipleExposureSessionState(
         get() = capturedCount >= 2 && !isProcessing
 }
 
+private const val TONEMAP_MODE_SYSTEM_DEFAULT = "SYSTEM_DEFAULT"
+private const val TONEMAP_MODE_SRGB = "SRGB"
+private const val TONEMAP_MODE_LINEAR_PIPELINE = "LINEAR_PIPELINE"
+
+private fun sanitizeViewModelTonemapMode(mode: String): String {
+    return when (mode) {
+        "FAST", "HIGH_QUALITY" -> TONEMAP_MODE_SYSTEM_DEFAULT
+        "REC709" -> TONEMAP_MODE_SRGB
+        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> TONEMAP_MODE_LINEAR_PIPELINE
+        TONEMAP_MODE_SYSTEM_DEFAULT, TONEMAP_MODE_SRGB, TONEMAP_MODE_LINEAR_PIPELINE -> mode
+        else -> TONEMAP_MODE_SYSTEM_DEFAULT
+    }
+}
+
 private fun resolvePreviewBaselineTarget(prefs: UserPreferences): BaselineColorCorrectionTarget? {
     return when {
-        prefs.useRaw && prefs.tonemapMode == "LINEAR_PIPELINE" -> BaselineColorCorrectionTarget.RAW
+        prefs.useRaw && prefs.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE -> BaselineColorCorrectionTarget.RAW
         prefs.useRaw -> null
         else -> BaselineColorCorrectionTarget.JPG
     }
@@ -635,6 +649,53 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (clearActivePresetOnMismatch) {
             clearActivePresetIfCurrentSettingsMismatch()
+        }
+    }
+
+    private fun isRawEnabledForNaturalLightHdrGuard(prefs: UserPreferences): Boolean {
+        return prefs.useRaw
+    }
+
+    private fun shouldDisableNaturalLightForHdrComposition(prefs: UserPreferences): Boolean {
+        return prefs.useHdrComposition && !isRawEnabledForNaturalLightHdrGuard(prefs)
+    }
+
+    private suspend fun saveTonemapModeWithFeatureGuards(mode: String) {
+        val resolvedMode = sanitizeViewModelTonemapMode(mode)
+        if (resolvedMode == TONEMAP_MODE_LINEAR_PIPELINE) {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val shouldDisableMultipleExposure = prefs.useMultipleExposure
+            val shouldDisableHdrComposition = shouldDisableNaturalLightForHdrComposition(prefs)
+
+            if (shouldDisableMultipleExposure || shouldDisableHdrComposition) {
+                applyCameraFeatureUpdate(
+                    CameraFeatureUpdate(
+                        useMultipleExposure = if (shouldDisableMultipleExposure) {
+                            SettingValue(false)
+                        } else {
+                            null
+                        },
+                        useHdrComposition = if (shouldDisableHdrComposition) {
+                            SettingValue(false)
+                        } else {
+                            null
+                        }
+                    )
+                )
+            }
+
+            if (prefs.rawAutoExposure) {
+                userPreferencesRepository.saveRawAutoExposure(false)
+            }
+        }
+        userPreferencesRepository.saveTonemapMode(resolvedMode)
+    }
+
+    private suspend fun clearNaturalLightTonemapIfNeeded(reason: String, prefs: UserPreferences? = null) {
+        val currentPrefs = prefs ?: userPreferencesRepository.userPreferences.first()
+        if (currentPrefs.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE) {
+            PLog.d(TAG, "Disabling Natural Light tone map: $reason")
+            userPreferencesRepository.saveTonemapMode(TONEMAP_MODE_SYSTEM_DEFAULT)
         }
     }
 
@@ -1282,6 +1343,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val effectiveUseRaw = it.useRaw && !multipleExposureEnabled
                 val effectiveUseMFNR = it.useMFNR && !multipleExposureEnabled
                 val effectiveUseMFSR = it.useMFSR && !multipleExposureEnabled
+                if (it.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE &&
+                    (multipleExposureEnabled || shouldDisableNaturalLightForHdrComposition(it))
+                ) {
+                    viewModelScope.launch {
+                        clearNaturalLightTonemapIfNeeded(
+                            reason = "conflicting persisted camera feature state",
+                            prefs = it
+                        )
+                    }
+                }
                 if (currentCameraState.useHdrComposition != it.useHdrComposition) {
                     cameraController.setUseHdrComposition(it.useHdrComposition)
                 }
@@ -1988,6 +2059,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setUseMultipleExposure(enabled: Boolean) {
         viewModelScope.launch {
+            if (enabled) {
+                clearNaturalLightTonemapIfNeeded("multiple exposure enabled")
+            }
             applyCameraFeatureUpdate(
                 CameraFeatureUpdate(useMultipleExposure = SettingValue(enabled))
             )
@@ -3376,11 +3450,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setUseHdrComposition(enabled: Boolean) {
-        cameraController.setUseHdrComposition(enabled)
-        if (state.value.useMFNR || state.value.useMFSR) {
-            reopenCamera()
-        }
         viewModelScope.launch {
+            if (enabled) {
+                val prefs = userPreferencesRepository.userPreferences.first()
+                if (shouldDisableNaturalLightForHdrComposition(prefs)) {
+                    clearNaturalLightTonemapIfNeeded(
+                        reason = "HDR composition enabled while RAW is off",
+                        prefs = prefs
+                    )
+                }
+            }
+            cameraController.setUseHdrComposition(enabled)
+            if (state.value.useMFNR || state.value.useMFSR) {
+                reopenCamera()
+            }
             userPreferencesRepository.saveUseHdrComposition(enabled)
         }
     }
@@ -3452,6 +3535,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setUseRaw(useRaw: Boolean) {
         viewModelScope.launch {
+            if (!useRaw) {
+                val prefs = userPreferencesRepository.userPreferences.first()
+                if (prefs.useHdrComposition) {
+                    clearNaturalLightTonemapIfNeeded(
+                        reason = "RAW disabled while HDR composition is active",
+                        prefs = prefs
+                    )
+                }
+            }
             applyCameraFeatureUpdate(
                 CameraFeatureUpdate(useRaw = SettingValue(useRaw))
             )
@@ -5450,8 +5542,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setTonemapMode(mode: String) {
         viewModelScope.launch {
-            userPreferencesRepository.saveTonemapMode(mode)
+            saveTonemapModeWithFeatureGuards(mode)
         }
+    }
+
+    fun setNaturalLightToneMapEnabled(enabled: Boolean) {
+        setTonemapMode(
+            if (enabled) {
+                TONEMAP_MODE_LINEAR_PIPELINE
+            } else {
+                TONEMAP_MODE_SYSTEM_DEFAULT
+            }
+        )
     }
 
     fun setFixTonemapPreview(enabled: Boolean) {

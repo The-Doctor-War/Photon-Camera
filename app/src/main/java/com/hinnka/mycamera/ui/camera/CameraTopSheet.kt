@@ -70,6 +70,8 @@ fun CameraTopSheet(
     useRaw: Boolean,
     onRawToggle: (Boolean) -> Unit,
     isRawSupported: Boolean,
+    useNaturalLight: Boolean,
+    onNaturalLightToggle: (Boolean) -> Unit,
     rawDcpId: String?,
     availableDcps: List<DcpInfo>,
     rawBaselineLutId: String?,
@@ -99,7 +101,6 @@ fun CameraTopSheet(
     onMeteringModeChange: (MeteringMode) -> Unit,
     onFilterManageClick: () -> Unit,
     onFrameManageClick: () -> Unit,
-    onPresetManageClick: () -> Unit,
     onToolboxClick: () -> Unit,
     onMoreSettingsClick: () -> Unit,
     useMFNR: Boolean,
@@ -187,6 +188,14 @@ fun CameraTopSheet(
                             modifier = Modifier.weight(1f)
                         )
                     }
+
+                    if (!isRawSupported) {
+                        NaturalLightQuickSetting(
+                            checked = useNaturalLight,
+                            onCheckedChange = onNaturalLightToggle,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -195,6 +204,14 @@ fun CameraTopSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (isRawSupported) {
+                        NaturalLightQuickSetting(
+                            checked = useNaturalLight,
+                            onCheckedChange = onNaturalLightToggle,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
                     QuickSettingToggle(
                         title = stringResource(R.string.settings_use_multiple_exposure),
                         checked = useMultipleExposure,
@@ -202,34 +219,50 @@ fun CameraTopSheet(
                         modifier = Modifier.weight(1f)
                     )
 
-                    val meteringLabel = when (meteringMode) {
-                        MeteringMode.SPOT -> stringResource(R.string.metering_spot)
-                        MeteringMode.CENTER_WEIGHTED -> stringResource(R.string.metering_center_weighted)
-                        MeteringMode.SYSTEM_DEFAULT -> stringResource(R.string.metering_system_default)
-                        MeteringMode.AVERAGE -> stringResource(R.string.metering_average)
-                        MeteringMode.HIGHLIGHT_PRIORITY -> stringResource(R.string.metering_highlight_priority)
+                    MeteringModeQuickSetting(
+                        meteringMode = meteringMode,
+                        onMeteringModeChange = onMeteringModeChange,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (!isRawSupported) {
+                        ToolboxQuickSetting(
+                            onToolboxClick = onToolboxClick,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
-                    QuickSettingValue(
-                        title = stringResource(R.string.metering_mode),
-                        value = meteringLabel,
-                        onClick = {
-                            val next = when (meteringMode) {
-                                MeteringMode.SPOT -> MeteringMode.SYSTEM_DEFAULT
-                                MeteringMode.SYSTEM_DEFAULT -> MeteringMode.CENTER_WEIGHTED
-                                MeteringMode.CENTER_WEIGHTED -> MeteringMode.AVERAGE
-                                MeteringMode.AVERAGE -> MeteringMode.HIGHLIGHT_PRIORITY
-                                MeteringMode.HIGHLIGHT_PRIORITY -> MeteringMode.SPOT
-                            }
-                            onMeteringModeChange(next)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (isRawSupported) {
+                        ToolboxQuickSetting(
+                            onToolboxClick = onToolboxClick,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
                     QuickSettingButton(
-                        title = stringResource(R.string.toolbox_title),
-                        icon = Icons.Default.Palette,
-                        onClick = onToolboxClick,
+                        title = stringResource(R.string.settings_filter_management),
+                        icon = Icons.Default.AutoAwesome,
+                        onClick = onFilterManageClick,
                         modifier = Modifier.weight(1f)
                     )
+
+                    QuickSettingButton(
+                        title = stringResource(R.string.settings_frame_management),
+                        icon = Icons.Default.BorderBottom,
+                        onClick = onFrameManageClick,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (!isRawSupported) {
+                        Spacer(modifier = Modifier.weight(1f).height(40.dp))
+                    }
                 }
             } else if (captureMode == CaptureMode.VIDEO) {
                 SectionLabel(title = stringResource(R.string.video_aspect_chip))
@@ -432,63 +465,39 @@ fun CameraTopSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val meteringLabel = when (meteringMode) {
-                        MeteringMode.SPOT -> stringResource(R.string.metering_spot)
-                        MeteringMode.CENTER_WEIGHTED -> stringResource(R.string.metering_center_weighted)
-                        MeteringMode.SYSTEM_DEFAULT -> stringResource(R.string.metering_system_default)
-                        MeteringMode.AVERAGE -> stringResource(R.string.metering_average)
-                        MeteringMode.HIGHLIGHT_PRIORITY -> stringResource(R.string.metering_highlight_priority)
-                    }
-                    QuickSettingValue(
-                        title = stringResource(R.string.metering_mode),
-                        value = meteringLabel,
-                        onClick = {
-                            val next = when (meteringMode) {
-                                MeteringMode.SPOT -> MeteringMode.SYSTEM_DEFAULT
-                                MeteringMode.SYSTEM_DEFAULT -> MeteringMode.CENTER_WEIGHTED
-                                MeteringMode.CENTER_WEIGHTED -> MeteringMode.AVERAGE
-                                MeteringMode.AVERAGE -> MeteringMode.HIGHLIGHT_PRIORITY
-                                MeteringMode.HIGHLIGHT_PRIORITY -> MeteringMode.SPOT
-                            }
-                            onMeteringModeChange(next)
-                        },
+                    MeteringModeQuickSetting(
+                        meteringMode = meteringMode,
+                        onMeteringModeChange = onMeteringModeChange,
                         modifier = Modifier.weight(1f)
                     )
-                    QuickSettingButton(
-                        title = stringResource(R.string.toolbox_title),
-                        icon = Icons.Default.Palette,
-                        onClick = onToolboxClick,
+                    ToolboxQuickSetting(
+                        onToolboxClick = onToolboxClick,
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (captureMode != CaptureMode.PHOTO) {
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                QuickSettingButton(
-                    title = stringResource(R.string.settings_filter_management),
-                    icon = Icons.Default.AutoAwesome,
-                    onClick = onFilterManageClick,
-                    modifier = Modifier.weight(1f)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    QuickSettingButton(
+                        title = stringResource(R.string.settings_filter_management),
+                        icon = Icons.Default.AutoAwesome,
+                        onClick = onFilterManageClick,
+                        modifier = Modifier.weight(1f)
+                    )
 
-                QuickSettingButton(
-                    title = stringResource(R.string.settings_frame_management),
-                    icon = Icons.Default.BorderBottom,
-                    onClick = onFrameManageClick,
-                    modifier = Modifier.weight(1f)
-                )
-
-                QuickSettingButton(
-                    title = stringResource(R.string.settings_preset_management),
-                    icon = Icons.Default.Tune,
-                    onClick = onPresetManageClick,
-                    modifier = Modifier.weight(1f)
-                )
+                    QuickSettingButton(
+                        title = stringResource(R.string.settings_frame_management),
+                        icon = Icons.Default.BorderBottom,
+                        onClick = onFrameManageClick,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
             Spacer(Modifier.weight(1f))
@@ -800,6 +809,63 @@ private fun SectionLabel(title: String) {
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier.padding(bottom = 12.dp)
+    )
+}
+
+@Composable
+private fun NaturalLightQuickSetting(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    QuickSettingToggle(
+        title = stringResource(R.string.settings_tonemap_mode_natural_light),
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun MeteringModeQuickSetting(
+    meteringMode: MeteringMode,
+    onMeteringModeChange: (MeteringMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val meteringLabel = when (meteringMode) {
+        MeteringMode.SPOT -> stringResource(R.string.metering_spot)
+        MeteringMode.CENTER_WEIGHTED -> stringResource(R.string.metering_center_weighted)
+        MeteringMode.SYSTEM_DEFAULT -> stringResource(R.string.metering_system_default)
+        MeteringMode.AVERAGE -> stringResource(R.string.metering_average)
+        MeteringMode.HIGHLIGHT_PRIORITY -> stringResource(R.string.metering_highlight_priority)
+    }
+    QuickSettingValue(
+        title = stringResource(R.string.metering_mode),
+        value = meteringLabel,
+        onClick = {
+            val next = when (meteringMode) {
+                MeteringMode.SPOT -> MeteringMode.SYSTEM_DEFAULT
+                MeteringMode.SYSTEM_DEFAULT -> MeteringMode.CENTER_WEIGHTED
+                MeteringMode.CENTER_WEIGHTED -> MeteringMode.AVERAGE
+                MeteringMode.AVERAGE -> MeteringMode.HIGHLIGHT_PRIORITY
+                MeteringMode.HIGHLIGHT_PRIORITY -> MeteringMode.SPOT
+            }
+            onMeteringModeChange(next)
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun ToolboxQuickSetting(
+    onToolboxClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    QuickSettingButton(
+        title = stringResource(R.string.toolbox_title),
+        icon = Icons.Default.Palette,
+        onClick = onToolboxClick,
+        modifier = modifier
     )
 }
 
