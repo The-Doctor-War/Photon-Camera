@@ -2616,6 +2616,11 @@ object GalleryManager {
 
             val finalStackResult = rawStackResult ?: return@withContext
 
+            val stackedMetadata = if (finalStackResult.isNormalizedSensorData) {
+                metadata.withBakedRawLevelCorrectionsCleared("RAW stack")
+            } else {
+                metadata
+            }
             val fusedBayerBuffer = finalStackResult.fusedBayerBuffer ?: return@withContext
             val dngWritten = try {
                 trySaveStackedRawDng(
@@ -2633,7 +2638,7 @@ object GalleryManager {
                     captureResult = captureResult,
                     rotation = rotation,
                     thumbnail = null,
-                    metadata = metadata,
+                    metadata = stackedMetadata,
                     shouldAutoSave = shouldAutoSave,
                     exportDngWithRawExport = exportDngWithRawExport
                 )
@@ -2651,7 +2656,7 @@ object GalleryManager {
             @Suppress("ExplicitGarbageCollectionCall")
             System.gc()
 
-            var updatedMetadata: MediaMetadata = metadata
+            var updatedMetadata: MediaMetadata = stackedMetadata
             val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
             val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
@@ -2922,6 +2927,7 @@ object GalleryManager {
                 )
                 val rawHdrProfileGainTableMap = stackResult.profileGainTableMap
                     ?: DngProfileGainTableMap.forHdrBaselineExposure(rawHdrBaselineExposureEv)
+                val stackedMetadata = metadata.withBakedRawLevelCorrectionsCleared("RAW HDR stack")
                 val dngWritten = try {
                     trySaveStackedRawDng(
                         context = context,
@@ -2938,7 +2944,7 @@ object GalleryManager {
                         captureResult = shortCandidate.captureResult,
                         rotation = rotation,
                         thumbnail = null,
-                        metadata = metadata,
+                        metadata = stackedMetadata,
                         shouldAutoSave = shouldAutoSave,
                         exportDngWithRawExport = exportDngWithRawExport,
                         baselineExposureEv = rawHdrBaselineExposureEv,
@@ -2962,7 +2968,7 @@ object GalleryManager {
                     photoId = photoId,
                     dngFile = dngFile,
                     aspectRatio = aspectRatio,
-                    metadata = metadata,
+                    metadata = stackedMetadata,
                     rotation = rotation,
                     exposureBias = exposureBias,
                     photoProcessor = photoProcessor,
@@ -2988,6 +2994,24 @@ object GalleryManager {
             }
             closeRemainingImages()
         }
+    }
+
+    private fun MediaMetadata.withBakedRawLevelCorrectionsCleared(source: String): MediaMetadata {
+        val hasLevelOverride = rawBlackLevelMode != null ||
+                rawCustomBlackLevel != null ||
+                rawWhiteLevelMode != null
+        if (!hasLevelOverride) {
+            return this
+        }
+        PLog.d(
+            TAG,
+            "$source DNG stores normalized RAW values; clearing metadata black/white level overrides"
+        )
+        return copy(
+            rawBlackLevelMode = null,
+            rawCustomBlackLevel = null,
+            rawWhiteLevelMode = null
+        )
     }
 
     private fun calculateRawHdrDngBaselineExposureEv(
