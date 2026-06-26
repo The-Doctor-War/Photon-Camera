@@ -131,19 +131,15 @@ private data class RawSpectralFilmSettings(
 )
 
 private fun resolveEffectiveRawAutoExposure(
-    userPrefs: UserPreferences?,
-    isRawCapture: Boolean,
-    exposureBias: Float
+    userPrefs: UserPreferences?
 ): Boolean {
-    val rawAutoExposure = userPrefs?.rawAutoExposure ?: true
-    if (!isRawCapture || abs(exposureBias) <= 0.0001f) return rawAutoExposure
-    return false
+    return userPrefs?.rawAutoExposure ?: true
 }
 
 private data class PresetMatchSnapshot(
     val lutId: String?,
     val colorRecipe: ColorRecipeParams,
-    val effects: com.hinnka.mycamera.model.EffectParams,
+    val effects: EffectParams,
     val aspectRatio: String,
     val useRaw: Boolean,
     val useMFNR: Boolean,
@@ -226,7 +222,7 @@ private data class ActivePresetMatchState(
     val aspectRatio: String,
     val lutId: String,
     val recipe: ColorRecipeParams,
-    val effects: com.hinnka.mycamera.model.EffectParams
+    val effects: EffectParams
 )
 
 private data class SettingValue<T>(val value: T)
@@ -234,7 +230,7 @@ private data class SettingValue<T>(val value: T)
 private data class CameraFeatureUpdate(
     val lutId: SettingValue<String?>? = null,
     val colorRecipe: SettingValue<ColorRecipeParams>? = null,
-    val effects: SettingValue<com.hinnka.mycamera.model.EffectParams>? = null,
+    val effects: SettingValue<EffectParams>? = null,
     val aspectRatio: SettingValue<AspectRatio>? = null,
     val useRaw: SettingValue<Boolean>? = null,
     val useMFNR: SettingValue<Boolean>? = null,
@@ -342,9 +338,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    val currentEffectParams: StateFlow<com.hinnka.mycamera.model.EffectParams> = userPreferencesRepository.userPreferences
+    val currentEffectParams: StateFlow<EffectParams> = userPreferencesRepository.userPreferences
         .map { it.activeEffectParams }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.model.EffectParams.DEFAULT)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, EffectParams.DEFAULT)
 
     val customPresets: StateFlow<List<com.hinnka.mycamera.model.CameraPreset>> = userPreferencesRepository.userPreferences
         .map { it.customPresets }
@@ -444,7 +440,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return currentEffectParams.value.applyTo(recipe)
     }
 
-    fun setEffectParams(effects: com.hinnka.mycamera.model.EffectParams) {
+    fun setEffectParams(effects: EffectParams) {
         viewModelScope.launch {
             applyCameraFeatureUpdate(
                 CameraFeatureUpdate(effects = SettingValue(effects))
@@ -1965,8 +1961,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         )
         val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
             userPrefs = userPrefs,
-            isRawCapture = baselineTarget == BaselineColorCorrectionTarget.RAW,
-            exposureBias = state.value.exposureBias,
         )
 
         val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
@@ -4280,7 +4274,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
             val droModeString = droMode.value
             val droModeForProcessing =
-                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.fromPersistedName(droModeString)
+                RawProcessingPreferences.DROMode.fromPersistedName(droModeString)
             val currentCameraId = cameraController.getCurrentCameraId()
 
             // 计算旋转角度
@@ -4318,8 +4312,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
-                isRawCapture = baselineTarget == BaselineColorCorrectionTarget.RAW,
-                exposureBias = state.value.exposureBias,
             )
             val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
 
@@ -4478,8 +4470,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val currentCameraId = cameraController.getCurrentCameraId()
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
-                isRawCapture = false,
-                exposureBias = currentState.exposureBias,
             )
             val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
             val captureInfo = cameraController.rebuildCaptureInfo(
@@ -4623,8 +4613,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val currentCameraId = cameraController.getCurrentCameraId()
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
-                isRawCapture = false,
-                exposureBias = currentState.exposureBias,
             )
             val captureInfo = cameraController.rebuildCaptureInfo(
                 result = null,
@@ -4804,8 +4792,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
-                isRawCapture = baselineTarget == BaselineColorCorrectionTarget.RAW,
-                exposureBias = state.value.exposureBias,
             )
             val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
 
@@ -5337,8 +5323,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
         val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
             userPrefs = userPrefs,
-            isRawCapture = baselineTarget == BaselineColorCorrectionTarget.RAW,
-            exposureBias = state.value.exposureBias,
         )
         val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
 
@@ -5603,10 +5587,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         )
                     )
-                }
-
-                if (prefs.rawAutoExposure) {
-                    userPreferencesRepository.saveRawAutoExposure(false)
                 }
             }
             if (enabled) {

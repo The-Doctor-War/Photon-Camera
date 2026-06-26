@@ -1161,12 +1161,12 @@ fun GalleryEditScreen(
                                             }
                                         },
                                         onRawAutoExposureChange = {
-                                            if (it) {
+                                            /*if (it) {
                                                 viewModel.saveRawExposureCompensationValue(currentPhoto, 0f)
                                             }
                                             viewModel.saveRawAutoExposureValue(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
-                                            }
+                                            }*/
                                         },
                                         onRawHighlightsAdjustmentChange = {
                                             viewModel.saveRawHighlightsAdjustmentValue(currentPhoto, it)

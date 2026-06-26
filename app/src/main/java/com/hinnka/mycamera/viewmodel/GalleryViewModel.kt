@@ -2072,6 +2072,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawHighlightsAdjustmentValue(mediaData: MediaData, value: Float, onComplete: ((Boolean) -> Unit)? = null) {
         editRawHighlightsAdjustment.value = value
+        if (value != 0f) {
+            editRawAutoExposure.value = false
+        }
         persistRawEditMetadata(mediaData, onComplete)
     }
 

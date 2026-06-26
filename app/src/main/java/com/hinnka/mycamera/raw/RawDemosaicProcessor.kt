@@ -860,6 +860,9 @@ class RawDemosaicProcessor {
                     PLog.d(
                         TAG,
                         "RAW auto exposure thumbnail stats: luma=${stats.midToneLinearLuma} " +
+                            "clipLow=${stats.clipLow} clipHigh=${stats.clipHigh} " +
+                            "highlightAmount=${stats.highlightCompression.amount} " +
+                            "highlightStrength=${stats.highlightCompression.strength} " +
                             "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount}"
                     )
                 }
@@ -1207,6 +1210,11 @@ class RawDemosaicProcessor {
             } else {
                 rawExposureCompensation
             }
+            val effectiveHighlightsAdjustment = if (useAutoDevelopAdjustments) {
+                meteringResult.highlightCompression.autoHighlightsAdjustment
+            } else {
+                rawHighlightsAdjustment
+            }
             val engineDefaultExposureCompensation = colorEngine.defaultExposureCompensationEv
             val profileExposureCompensation =
                 effectiveExposureCompensation + engineDefaultExposureCompensation
@@ -1225,7 +1233,7 @@ class RawDemosaicProcessor {
                 profileLinearExposureGain
             }
             val shadowsHighlightsParams = ShadowsHighlightsParams(
-                highlights = rawHighlightsAdjustment,
+                highlights = effectiveHighlightsAdjustment,
                 shadows = rawShadowsAdjustment,
             )
             RawAutoAdjustments(
@@ -1240,7 +1248,10 @@ class RawDemosaicProcessor {
                             "autoMeteringApplied=$useAutoDevelopAdjustments " +
                             "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
                             "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
-                            "engineCompensationDomain=${colorEngine.exposureCompensationDomain}"
+                            "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
+                            "highlightCompressionAmount=${meteringResult.highlightCompression.amount} " +
+                            "highlightCompressionStrength=${meteringResult.highlightCompression.strength} " +
+                            "highlightReductionThreshold=${meteringResult.highlightCompression.reductionThreshold}"
                 )
                 if (useAutoDevelopAdjustments) {
                     onRawAutoAdjustments?.invoke(adjustments)
@@ -4733,6 +4744,11 @@ class RawDemosaicProcessor {
                 "Tone-mapped RAW AE: mode=ViewfinderThumbnail target=$targetLuma " +
                     "autoEv=$meteredEv renderedLuma=${best.renderedMidToneLinearLuma} " +
                     "errorEv=${best.errorEv} profileExposureEv=${best.profileExposureEv} " +
+                    "clipLow=${best.stats.clipLow} clipHigh=${best.stats.clipHigh} " +
+                    "highlightCompressionAmount=${best.stats.highlightCompression.amount} " +
+                    "highlightCompressionStrength=${best.stats.highlightCompression.strength} " +
+                    "highlightReductionThreshold=${best.stats.highlightCompression.reductionThreshold} " +
+                    "autoHighlights=${best.stats.highlightCompression.autoHighlightsAdjustment} " +
                     "baselineExposure=${metadata.baselineExposure} " +
                     "dcpBaselineExposureOffset=$dcpBaselineExposureOffset " +
                     "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
@@ -4752,9 +4768,10 @@ class RawDemosaicProcessor {
                 meteredEv = meteredEv,
                 dynamicRangeGap = 0f,
                 avgLuma = best.renderedMidToneLinearLuma,
-                clipLow = 0f,
-                clipHigh = 0f,
-                curveWhitePoint = 1f
+                clipLow = best.stats.clipLow,
+                clipHigh = best.stats.clipHigh,
+                curveWhitePoint = 1f,
+                highlightCompression = best.stats.highlightCompression
             )
         } finally {
             LargeDirectBuffer.free(readbackBuffer)

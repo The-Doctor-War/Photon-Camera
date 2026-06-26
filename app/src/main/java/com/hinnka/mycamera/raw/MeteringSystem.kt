@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
  * 评价测光与场景分析系统
@@ -19,6 +20,15 @@ object MeteringSystem {
     private const val SRGB_TRANSFER_GAMMA = 2.4f
     private const val CENTER_WEIGHT_SIGMA = 0.32f
     private const val MIN_METERING_SAMPLE_COUNT = 32
+    private const val CLIP_LOW_LUMA = 0.002f
+    private const val CLIP_HIGH_LUMA = 0.995f
+    private const val HIGHLIGHT_COMPRESSION_START_LUMA = 0.62f
+    private const val HIGHLIGHT_COMPRESSION_FULL_LUMA = 0.96f
+    private const val HIGHLIGHT_COMPRESSION_AMOUNT_MIN = 0.015f
+    private const val HIGHLIGHT_COMPRESSION_AMOUNT_FULL = 0.18f
+    private const val HIGHLIGHT_COMPRESSION_STRENGTH_MIN = 0.32f
+    private const val HIGHLIGHT_COMPRESSION_STRENGTH_FULL = 0.86f
+    private const val AUTO_HIGHLIGHTS_MAX_REDUCTION = 0.70f
 
     data class MeteringResult(
         val meteredEv: Float,
@@ -26,7 +36,8 @@ object MeteringSystem {
         val avgLuma: Float,
         val clipLow: Float,
         val clipHigh: Float,
-        val curveWhitePoint: Float
+        val curveWhitePoint: Float,
+        val highlightCompression: HighlightCompressionEstimate = HighlightCompressionEstimate.NEUTRAL
     ) {
         companion object {
             val EMPTY = MeteringResult(
@@ -36,6 +47,22 @@ object MeteringSystem {
                 clipLow = 0f,
                 clipHigh = 0f,
                 curveWhitePoint = 0f
+            )
+        }
+    }
+
+    data class HighlightCompressionEstimate(
+        val amount: Float,
+        val strength: Float,
+        val reductionThreshold: Float,
+        val autoHighlightsAdjustment: Float
+    ) {
+        companion object {
+            val NEUTRAL = HighlightCompressionEstimate(
+                amount = 0f,
+                strength = 0f,
+                reductionThreshold = 0f,
+                autoHighlightsAdjustment = 0f
             )
         }
     }
@@ -57,7 +84,10 @@ object MeteringSystem {
         val weightSum: Double,
         val sampleCount: Int,
         val sanitizedSampleCount: Int,
-        val midToneLinearLuma: Float
+        val midToneLinearLuma: Float,
+        val clipLow: Float,
+        val clipHigh: Float,
+        val highlightCompression: HighlightCompressionEstimate
     )
 
     fun hasManualRawDevelopAdjustments(
@@ -83,6 +113,10 @@ object MeteringSystem {
         var weightSum = 0.0
         var sampleCount = 0
         var sanitizedSampleCount = 0
+        var clipLowWeightSum = 0.0
+        var clipHighWeightSum = 0.0
+        var highlightCompressionWeightSum = 0.0
+        var highlightCompressionStrengthSum = 0.0
 
         for (y in 0 until height) {
             val yFraction = (y + 0.5f) / height.toFloat()
@@ -105,6 +139,27 @@ object MeteringSystem {
                 val weight = centerWeight(xFraction, yFraction)
                 weightedLogLumaSum += log2(luma.coerceAtLeast(LUMA_FLOOR)).toDouble() * weight.toDouble()
                 weightSum += weight.toDouble()
+                if (luma <= CLIP_LOW_LUMA) {
+                    clipLowWeightSum += weight.toDouble()
+                }
+                if (luma >= CLIP_HIGH_LUMA) {
+                    clipHighWeightSum += weight.toDouble()
+                }
+                val compressionWeight = smoothStep(
+                    HIGHLIGHT_COMPRESSION_START_LUMA,
+                    HIGHLIGHT_COMPRESSION_FULL_LUMA,
+                    luma
+                )
+                if (compressionWeight > 0f) {
+                    val weightedCompression = weight.toDouble() * compressionWeight.toDouble()
+                    val compressionStrength = smoothStep(
+                        HIGHLIGHT_COMPRESSION_START_LUMA,
+                        1f,
+                        luma
+                    )
+                    highlightCompressionWeightSum += weightedCompression
+                    highlightCompressionStrengthSum += weightedCompression * compressionStrength.toDouble()
+                }
                 sampleCount++
             }
         }
@@ -117,12 +172,27 @@ object MeteringSystem {
             exp2((weightedLogLumaSum / weightSum).toFloat()),
             DISPLAY_TARGET_LUMA
         )
+        val clipLow = (clipLowWeightSum / weightSum).toFloat().coerceIn(0f, 1f)
+        val clipHigh = (clipHighWeightSum / weightSum).toFloat().coerceIn(0f, 1f)
+        val highlightCompressionAmount =
+            (highlightCompressionWeightSum / weightSum).toFloat().coerceIn(0f, 1f)
+        val highlightCompressionStrength = if (highlightCompressionWeightSum > 0.0) {
+            (highlightCompressionStrengthSum / highlightCompressionWeightSum).toFloat().coerceIn(0f, 1f)
+        } else {
+            0f
+        }
         return SrgbThumbnailMeteringStats(
             weightedLogLumaSum = weightedLogLumaSum,
             weightSum = weightSum,
             sampleCount = sampleCount,
             sanitizedSampleCount = sanitizedSampleCount,
-            midToneLinearLuma = midToneLinearLuma
+            midToneLinearLuma = midToneLinearLuma,
+            clipLow = clipLow,
+            clipHigh = clipHigh,
+            highlightCompression = estimateHighlightCompression(
+                amount = highlightCompressionAmount,
+                strength = highlightCompressionStrength
+            )
         )
     }
 
@@ -156,6 +226,45 @@ object MeteringSystem {
         } else {
             ((clamped + SRGB_TRANSFER_A) / (1f + SRGB_TRANSFER_A)).pow(SRGB_TRANSFER_GAMMA)
         }
+    }
+
+    fun estimateHighlightCompression(
+        amount: Float,
+        strength: Float
+    ): HighlightCompressionEstimate {
+        val safeAmount = sanitizeUnit(amount)
+        val safeStrength = sanitizeUnit(strength)
+        val amountPressure = smoothStep(
+            HIGHLIGHT_COMPRESSION_AMOUNT_MIN,
+            HIGHLIGHT_COMPRESSION_AMOUNT_FULL,
+            safeAmount
+        )
+        val strengthPressure = smoothStep(
+            HIGHLIGHT_COMPRESSION_STRENGTH_MIN,
+            HIGHLIGHT_COMPRESSION_STRENGTH_FULL,
+            safeStrength
+        )
+        val reductionThreshold = sqrt(amountPressure * strengthPressure).coerceIn(0f, 1f)
+        val autoHighlightsAdjustment = if (reductionThreshold <= 0f) {
+            0f
+        } else {
+            (-AUTO_HIGHLIGHTS_MAX_REDUCTION * reductionThreshold).coerceIn(-1f, 0f)
+        }
+        return HighlightCompressionEstimate(
+            amount = safeAmount,
+            strength = safeStrength,
+            reductionThreshold = reductionThreshold,
+            autoHighlightsAdjustment = autoHighlightsAdjustment
+        )
+    }
+
+    private fun sanitizeUnit(value: Float): Float {
+        return if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+    }
+
+    private fun smoothStep(edge0: Float, edge1: Float, value: Float): Float {
+        val t = ((value - edge0) / (edge1 - edge0).coerceAtLeast(0.000001f)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
     }
 
     private fun log2(value: Float): Float {

@@ -1640,11 +1640,15 @@ fun SettingsScreen(
                             if (it) {
                                 rawExposureCompensationUi = 0f
                                 viewModel.setRawExposureCompensation(0f)
+                                viewModel.setRawHighlightsAdjustment(0f)
                             }
                             viewModel.setRawAutoExposure(it)
                         },
                         onRawHighlightsAdjustmentChange = {
                             rawHighlightsAdjustmentUi = it
+                            if (it != 0f && rawAutoExposure) {
+                                viewModel.setRawAutoExposure(false)
+                            }
                         },
                         onRawShadowsAdjustmentChange = {
                             rawShadowsAdjustmentUi = it
