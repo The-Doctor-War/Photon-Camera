@@ -421,6 +421,22 @@ class RawDemosaicProcessor {
         )
     }
 
+    private fun analyzeSrgbThumbnailForMetering(bitmap: Bitmap?): MeteringSystem.SrgbThumbnailMeteringStats? {
+        if (bitmap == null || bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+            return null
+        }
+        return try {
+            val width = bitmap.width
+            val height = bitmap.height
+            val pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            MeteringSystem.analyzeSrgbThumbnail(width, height, pixels)
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to analyze capture preview thumbnail for RAW AE", e)
+            null
+        }
+    }
+
     /**
      * 处理 DNG 文件
      *
@@ -459,6 +475,7 @@ class RawDemosaicProcessor {
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
+        capturePreviewThumbnail: Bitmap? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
@@ -497,6 +514,7 @@ class RawDemosaicProcessor {
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
+                capturePreviewThumbnail = capturePreviewThumbnail,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata
@@ -611,6 +629,7 @@ class RawDemosaicProcessor {
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
+        capturePreviewThumbnail: Bitmap? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
@@ -649,6 +668,7 @@ class RawDemosaicProcessor {
                 rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
+                capturePreviewThumbnail = capturePreviewThumbnail,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata,
@@ -696,6 +716,7 @@ class RawDemosaicProcessor {
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
+        capturePreviewThumbnail: Bitmap? = null,
         dngFile: File? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
@@ -831,6 +852,22 @@ class RawDemosaicProcessor {
                 "RAW DCP Adobe tone features disabled for colorEngine=$requestedColorEngine: " +
                     "toneCurve=false baselineExposureOffset=false"
             )
+        }
+        val viewfinderThumbnailStats = if (rawAutoExposure) {
+            analyzeSrgbThumbnailForMetering(capturePreviewThumbnail).also { stats ->
+                if (stats == null) {
+                    PLog.d(TAG, "RAW auto exposure disabled: capture preview thumbnail unavailable")
+                } else {
+                    PLog.d(
+                        TAG,
+                        "RAW auto exposure thumbnail stats: luma=${stats.midToneLinearLuma} " +
+                            "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount} " +
+                            "highlightRejected=${stats.highlightRejectedSampleCount}"
+                    )
+                }
+            }
+        } else {
+            null
         }
 
         PLog.d(
@@ -1145,15 +1182,25 @@ class RawDemosaicProcessor {
                 // Keep the metering pass in scene-linear RAW space so HDR PGTM does not
                 // alter the histogram used to choose exposure.
                 applyDngBaselineExposure = false,
+                viewfinderThumbnailStats = viewfinderThumbnailStats,
+                dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
+                    resolvedDcpRenderPlan.baselineExposureOffset
+                } else {
+                    0f
+                },
+                renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv,
                 meteringCompensationEv = colorEngine.meteringCompensationEv,
-                useDepthWeighting = rawAutoExposure
+                useDepthWeighting = false
             )
 
-            val useAutoDevelopAdjustments = rawAutoExposure && !MeteringSystem.hasManualRawDevelopAdjustments(
-                rawExposureCompensation = rawExposureCompensation,
-                rawHighlightsAdjustment = rawHighlightsAdjustment,
-                rawShadowsAdjustment = rawShadowsAdjustment
-            )
+            val useAutoDevelopAdjustments = rawAutoExposure &&
+                viewfinderThumbnailStats != null &&
+                meteringResult != MeteringSystem.MeteringResult.EMPTY &&
+                !MeteringSystem.hasManualRawDevelopAdjustments(
+                    rawExposureCompensation = rawExposureCompensation,
+                    rawHighlightsAdjustment = rawHighlightsAdjustment,
+                    rawShadowsAdjustment = rawShadowsAdjustment
+                )
             val effectiveExposureCompensation = if (useAutoDevelopAdjustments) {
                 meteringResult.meteredEv
             } else {
@@ -1189,11 +1236,14 @@ class RawDemosaicProcessor {
                     TAG,
                     "RAW auto develop sliders: exposure=${adjustments.exposureCompensation} " +
                             "highlights=${adjustments.highlights} shadows=${adjustments.shadows} " +
+                            "autoMeteringApplied=$useAutoDevelopAdjustments " +
                             "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
                             "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
                             "engineCompensationDomain=${colorEngine.exposureCompensationDomain}"
                 )
-                onRawAutoAdjustments?.invoke(adjustments)
+                if (useAutoDevelopAdjustments) {
+                    onRawAutoAdjustments?.invoke(adjustments)
+                }
             }
             PLog.d(
                 TAG,
@@ -1798,6 +1848,8 @@ class RawDemosaicProcessor {
         uniform ivec2 uImageSize;
         uniform int uGroupsX;
         uniform int uUseDepthWeight;
+        uniform float uMeteringExposureScale;
+        uniform float uHighlightExclusionLuma;
 
         layout(std430, binding = 0) buffer HistogramOut {
             uint histogram[];
@@ -1868,8 +1920,13 @@ class RawDemosaicProcessor {
                 atomicAdd(localHistogram[bin], 1u);
 
                 vec2 uv = (vec2(coord) + vec2(0.5)) / vec2(uImageSize);
-                float weight = centerWeight(uv) * depthWeight(uv);
-                localStats[localIndex] = vec4(logLuma * weight, weight, 1.0, sanitized);
+                float meteredLuma = luma * max(uMeteringExposureScale, 0.0);
+                bool includeSample = uHighlightExclusionLuma <= 0.0 ||
+                    meteredLuma < uHighlightExclusionLuma;
+                if (includeSample) {
+                    float weight = centerWeight(uv) * depthWeight(uv);
+                    localStats[localIndex] = vec4(logLuma * weight, weight, 1.0, sanitized);
+                }
             }
             barrier();
 
@@ -4544,9 +4601,15 @@ class RawDemosaicProcessor {
         dcpRenderPlan: DcpRenderPlan?,
         applyDcpBaselineExposureOffset: Boolean,
         applyDngBaselineExposure: Boolean,
+        viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats?,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float,
         meteringCompensationEv: Float,
         useDepthWeighting: Boolean = true
     ): MeteringSystem.MeteringResult {
+        if (viewfinderThumbnailStats == null) {
+            return MeteringSystem.MeteringResult.EMPTY
+        }
         val meteringWidth = minOf(metadata.width, 256).coerceAtLeast(1)
         val meteringHeight = minOf(metadata.height, 256).coerceAtLeast(1)
         return try {
@@ -4615,6 +4678,9 @@ class RawDemosaicProcessor {
                     height = meteringHeight,
                     depthTextureId = depthTextureId,
                     baselineExposure = metadata.baselineExposure,
+                    viewfinderThumbnailStats = viewfinderThumbnailStats,
+                    dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+                    renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv,
                     meteringCompensationEv = meteringCompensationEv
                 ) ?: MeteringSystem.MeteringResult.EMPTY
 
@@ -4648,6 +4714,9 @@ class RawDemosaicProcessor {
         height: Int,
         depthTextureId: Int,
         baselineExposure: Float,
+        viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float,
         meteringCompensationEv: Float
     ): MeteringSystem.MeteringResult? {
         if (rawAeBaseProgram == 0) {
@@ -4658,15 +4727,25 @@ class RawDemosaicProcessor {
             return null
         }
 
+        val meteringBaseExposureScale = MeteringSystem.resolveViewfinderMeteringBaseExposureScale(
+            baselineExposure = baselineExposure,
+            dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+            renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv
+        )
         val baseStats = dispatchRawAeBaseStats(
             linearTextureId = linearTextureId,
             width = width,
             height = height,
-            depthTextureId = depthTextureId
+            depthTextureId = depthTextureId,
+            meteringBaseExposureScale = meteringBaseExposureScale,
+            highlightExclusionLuma = MeteringSystem.VIEWFINDER_METERING_HIGHLIGHT_EXCLUSION_LUMA
         ) ?: return null
         val plan = MeteringSystem.prepareGpuLinearRawAutoExposure(
             stats = baseStats,
             baselineExposure = baselineExposure,
+            viewfinderThumbnailStats = viewfinderThumbnailStats,
+            dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+            renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv,
             meteringCompensationEv = meteringCompensationEv,
             tag = "Linear RAW AE GPU"
         ) ?: return null
@@ -4677,7 +4756,9 @@ class RawDemosaicProcessor {
         linearTextureId: Int,
         width: Int,
         height: Int,
-        depthTextureId: Int
+        depthTextureId: Int,
+        meteringBaseExposureScale: Float,
+        highlightExclusionLuma: Float
     ): MeteringSystem.GpuRawAutoExposureBaseStats? {
         val groupsX = roundUp(width, RAW_AE_LOCAL_SIZE_X) / RAW_AE_LOCAL_SIZE_X
         val groupsY = roundUp(height, RAW_AE_LOCAL_SIZE_Y) / RAW_AE_LOCAL_SIZE_Y
@@ -4726,6 +4807,14 @@ class RawDemosaicProcessor {
             GLES31.glUniform1i(
                 GLES31.glGetUniformLocation(rawAeBaseProgram, "uUseDepthWeight"),
                 if (depthTextureId != 0) 1 else 0
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rawAeBaseProgram, "uMeteringExposureScale"),
+                meteringBaseExposureScale
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rawAeBaseProgram, "uHighlightExclusionLuma"),
+                highlightExclusionLuma
             )
             GLES31.glDispatchCompute(groupsX, groupsY, 1)
             GLES31.glMemoryBarrier(

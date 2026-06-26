@@ -4914,7 +4914,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     superResolutionScale = superResScale,
                     useGpuAcceleration = useGpuAcceleration.value,
                     exposureBias = state.value.exposureBias,
-                    exportDngWithRawExport = exportDngWithRawExport.value
+                    exportDngWithRawExport = exportDngWithRawExport.value,
+                    capturePreviewThumbnail = previewThumbnail
                 )
             }
             PLog.d(TAG, "Image saved: $photoId, LUT: $lutIdToSave, Frame: $frameIdToSave")
@@ -5276,7 +5277,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     photoQuality = photoQualityValue,
                     useGpuAcceleration = useGpuAcceleration.firstOrNull() ?: DeviceUtil.defaultGpuAcceleration,
                     exposureBias = state.value.exposureBias,
-                    exportDngWithRawExport = exportDngWithRawExport.firstOrNull() ?: false
+                    exportDngWithRawExport = exportDngWithRawExport.firstOrNull() ?: false,
+                    capturePreviewThumbnail = previewThumbnail
                 )
             }
             PLog.d(TAG, "RAW HDR bracket image saved: $photoId, mode=$captureMode")

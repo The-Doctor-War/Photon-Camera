@@ -4,6 +4,7 @@ import com.hinnka.mycamera.utils.PLog
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.pow
 
 /**
  * 评价测光与场景分析系统
@@ -17,6 +18,14 @@ object MeteringSystem {
     private const val RAW_CURVE_NEUTRAL_WHITE_POINT = 1.0f
     private const val AUTO_DEVELOP_EPSILON = 0.0001f
     private const val AUTO_CLIP_FRACTION = 0.0002f
+    private const val SRGB_TRANSFER_THRESHOLD = 0.04045f
+    private const val SRGB_LINEAR_SCALE = 12.92f
+    private const val SRGB_TRANSFER_A = 0.055f
+    private const val SRGB_TRANSFER_GAMMA = 2.4f
+    private const val CENTER_WEIGHT_SIGMA = 0.32f
+    private const val MIN_METERING_SAMPLE_COUNT = 32
+
+    const val VIEWFINDER_METERING_HIGHLIGHT_EXCLUSION_LUMA = 0.95f
 
 
     data class MeteringResult(
@@ -62,6 +71,15 @@ object MeteringSystem {
         val groupCount: Int
     )
 
+    data class SrgbThumbnailMeteringStats(
+        val weightedLogLumaSum: Double,
+        val weightSum: Double,
+        val sampleCount: Int,
+        val sanitizedSampleCount: Int,
+        val highlightRejectedSampleCount: Int,
+        val midToneLinearLuma: Float
+    )
+
     class GpuRawAutoExposurePlan internal constructor(
         val compensatedExposureScale: Float,
         val clipLow: Float,
@@ -87,6 +105,12 @@ object MeteringSystem {
         val midToneGain: Float,
         val highlightAnchorGain: Float,
         val adaptiveGain: Float,
+        val viewfinderTargetLuma: Float,
+        val viewfinderSampleCount: Int,
+        val viewfinderSanitizedSampleCount: Int,
+        val dcpBaselineExposureOffset: Float,
+        val renderingEngineMeteringCompensationEv: Float,
+        val totalBaseExposureEv: Float,
         val rawMeteredEv: Float,
         val dynamicRangeGap: Float,
         val sanitizedSampleCount: Int,
@@ -105,9 +129,74 @@ object MeteringSystem {
             abs(rawShadowsAdjustment) > AUTO_DEVELOP_EPSILON
     }
 
+    fun analyzeSrgbThumbnail(
+        width: Int,
+        height: Int,
+        argbPixels: IntArray
+    ): SrgbThumbnailMeteringStats? {
+        if (width <= 0 || height <= 0 || argbPixels.size < width * height) {
+            return null
+        }
+
+        var weightedLogLumaSum = 0.0
+        var weightSum = 0.0
+        var sampleCount = 0
+        var sanitizedSampleCount = 0
+        var highlightRejectedSampleCount = 0
+
+        for (y in 0 until height) {
+            val yFraction = (y + 0.5f) / height.toFloat()
+            for (x in 0 until width) {
+                val pixel = argbPixels[y * width + x]
+                val alpha = (pixel ushr 24) and 0xff
+                if (alpha == 0) continue
+
+                val alphaScale = alpha / 255f
+                val r = srgbToLinear(((pixel ushr 16) and 0xff) / 255f)
+                val g = srgbToLinear(((pixel ushr 8) and 0xff) / 255f)
+                val b = srgbToLinear((pixel and 0xff) / 255f)
+                val rawLuma = (0.2126f * r + 0.7152f * g + 0.0722f * b) * alphaScale
+                val luma = sanitizeLinearLuma(rawLuma)
+                if (luma != rawLuma) {
+                    sanitizedSampleCount++
+                }
+                if (isHighlightExcludedFromMetering(luma)) {
+                    highlightRejectedSampleCount++
+                    continue
+                }
+
+                val xFraction = (x + 0.5f) / width.toFloat()
+                val weight = centerWeight(xFraction, yFraction)
+                weightedLogLumaSum += log2(luma.coerceAtLeast(LUMA_FLOOR)).toDouble() * weight.toDouble()
+                weightSum += weight.toDouble()
+                sampleCount++
+            }
+        }
+
+        if (sampleCount < MIN_METERING_SAMPLE_COUNT || weightSum <= 0.0) {
+            return null
+        }
+
+        val midToneLinearLuma = sanitizeAverageLuma(
+            exp2((weightedLogLumaSum / weightSum).toFloat()),
+            DISPLAY_TARGET_LUMA
+        )
+        return SrgbThumbnailMeteringStats(
+            weightedLogLumaSum = weightedLogLumaSum,
+            weightSum = weightSum,
+            sampleCount = sampleCount,
+            sanitizedSampleCount = sanitizedSampleCount,
+            highlightRejectedSampleCount = highlightRejectedSampleCount,
+            midToneLinearLuma = midToneLinearLuma
+        )
+    }
+
     fun prepareGpuLinearRawAutoExposure(
         stats: GpuRawAutoExposureBaseStats,
         baselineExposure: Float,
+        viewfinderThumbnailStats: SrgbThumbnailMeteringStats,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float,
         meteringCompensationEv: Float = RAW_RENDERING_ENGINE_METERING_COMPENSATION_EV,
         tag: String = "Linear RAW AE GPU"
     ): GpuRawAutoExposurePlan? {
@@ -116,7 +205,7 @@ object MeteringSystem {
         }
 
         val safeMeteringCompensationEv = sanitizeMeteringCompensationEv(meteringCompensationEv)
-        val targetLuma = resolveDisplayTargetLuma(safeMeteringCompensationEv)
+        val targetLuma = viewfinderThumbnailStats.midToneLinearLuma
         val midToneLuma = if (stats.weightSum > 0.0) {
             exp2((stats.weightedLogLumaSum / stats.weightSum).toFloat())
         } else {
@@ -141,7 +230,15 @@ object MeteringSystem {
             logMax = stats.histogramLogMax
         )
 
-        val baselineExposureScale = exposureScaleFromEv(baselineExposure)
+        val safeDcpBaselineExposureOffset = sanitizeExposureEv(dcpBaselineExposureOffset)
+        val safeRenderingEngineMeteringCompensationEv =
+            sanitizeExposureEv(renderingEngineMeteringCompensationEv)
+        val totalBaseExposureEv = resolveViewfinderMeteringBaseExposureEv(
+            baselineExposure = baselineExposure,
+            dcpBaselineExposureOffset = safeDcpBaselineExposureOffset,
+            renderingEngineMeteringCompensationEv = safeRenderingEngineMeteringCompensationEv
+        )
+        val baselineExposureScale = exposureScaleFromEv(totalBaseExposureEv)
         val meteringClipLow = (clipLow * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
         val meteringP05 = (p05 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
         val meteringP25 = (p25 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
@@ -154,8 +251,7 @@ object MeteringSystem {
         val highlightAnchorGain = maxOf(1f, meteringClipHigh) / meteringClipHigh.coerceAtLeast(0.01f)
         val midToneGain = targetLuma / meteringMidToneLuma.coerceAtLeast(LUMA_FLOOR)
         val dynamicRangeGap = evDifference(meteringClipHigh, meteringClipLow)
-        val extra = smoothStep(4f, 12f, dynamicRangeGap)
-        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain * 1.1f, extra)
+        val adaptiveGain = midToneGain
         val autoExposureScale = adaptiveGain.coerceIn(0.25f, 4.0f)
         val rawMeteredEv = log2(autoExposureScale)
         val compensatedExposureScale = baselineExposureScale * autoExposureScale
@@ -185,6 +281,12 @@ object MeteringSystem {
             midToneGain = midToneGain,
             highlightAnchorGain = highlightAnchorGain,
             adaptiveGain = adaptiveGain,
+            viewfinderTargetLuma = targetLuma,
+            viewfinderSampleCount = viewfinderThumbnailStats.sampleCount,
+            viewfinderSanitizedSampleCount = viewfinderThumbnailStats.sanitizedSampleCount,
+            dcpBaselineExposureOffset = safeDcpBaselineExposureOffset,
+            renderingEngineMeteringCompensationEv = safeRenderingEngineMeteringCompensationEv,
+            totalBaseExposureEv = totalBaseExposureEv,
             rawMeteredEv = rawMeteredEv,
             dynamicRangeGap = dynamicRangeGap,
             sanitizedSampleCount = stats.sanitizedSampleCount,
@@ -210,8 +312,14 @@ object MeteringSystem {
                 "compClipLow=${plan.compensatedClipLow} compClipHigh=${plan.compensatedClipHigh} " +
                 "compP05=${plan.compensatedP05} compP25=${plan.compensatedP25} " +
                 "compP75=${plan.compensatedP75} compP90=${plan.compensatedP90} compP99=${plan.compensatedP99} " +
-                "baselineExposure=${plan.baselineExposure} " +
+                "mode=ViewfinderThumbnail baselineExposure=${plan.baselineExposure} " +
+                "dcpBaselineExposureOffset=${plan.dcpBaselineExposureOffset} " +
+                "engineMeteringEv=${plan.renderingEngineMeteringCompensationEv} " +
+                "totalBaseExposureEv=${plan.totalBaseExposureEv} " +
                 "target=${plan.targetLuma} meteringCompensationEv=${plan.meteringCompensationEv} " +
+                "viewfinderTarget=${plan.viewfinderTargetLuma} " +
+                "viewfinderSamples=${plan.viewfinderSampleCount} " +
+                "viewfinderSanitizedSamples=${plan.viewfinderSanitizedSampleCount} " +
                 "midToneLuma=${plan.midToneLuma} " +
                 "midToneGain=${plan.midToneGain} highlightAnchorGain=${plan.highlightAnchorGain} " +
                 "gain=${plan.adaptiveGain} ev=${plan.rawMeteredEv} gap=${plan.dynamicRangeGap} " +
@@ -242,6 +350,52 @@ object MeteringSystem {
             value.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
         } else {
             fallback.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
+        }
+    }
+
+    fun resolveViewfinderMeteringBaseExposureEv(
+        baselineExposure: Float,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float
+    ): Float {
+        return sanitizeExposureEv(
+            sanitizeExposureEv(baselineExposure) +
+                sanitizeExposureEv(dcpBaselineExposureOffset) +
+                sanitizeExposureEv(renderingEngineMeteringCompensationEv)
+        )
+    }
+
+    fun resolveViewfinderMeteringBaseExposureScale(
+        baselineExposure: Float,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float
+    ): Float {
+        return exposureScaleFromEv(
+            resolveViewfinderMeteringBaseExposureEv(
+                baselineExposure = baselineExposure,
+                dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+                renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv
+            )
+        )
+    }
+
+    private fun isHighlightExcludedFromMetering(luma: Float): Boolean {
+        return luma.isFinite() && luma >= VIEWFINDER_METERING_HIGHLIGHT_EXCLUSION_LUMA
+    }
+
+    private fun centerWeight(xFraction: Float, yFraction: Float): Float {
+        val dx = (xFraction - 0.5f) / CENTER_WEIGHT_SIGMA
+        val dy = (yFraction - 0.5f) / CENTER_WEIGHT_SIGMA
+        val gaussian = exp((-0.5f * (dx * dx + dy * dy)).toDouble()).toFloat()
+        return 0.35f + gaussian * 0.65f
+    }
+
+    private fun srgbToLinear(value: Float): Float {
+        val clamped = value.coerceIn(0f, 1f)
+        return if (clamped <= SRGB_TRANSFER_THRESHOLD) {
+            clamped / SRGB_LINEAR_SCALE
+        } else {
+            ((clamped + SRGB_TRANSFER_A) / (1f + SRGB_TRANSFER_A)).pow(SRGB_TRANSFER_GAMMA)
         }
     }
 
@@ -281,15 +435,6 @@ object MeteringSystem {
         return exp2(logMax).coerceIn(0f, MAX_LINEAR_LUMA)
     }
 
-    private fun percentile(sortedValues: FloatArray, percentile: Float): Float {
-        if (sortedValues.isEmpty()) {
-            return 0f
-        }
-
-        val index = ((sortedValues.size - 1) * percentile.coerceIn(0f, 1f)).toInt()
-        return sortedValues[index]
-    }
-
     private fun evDifference(brighter: Float, darker: Float): Float {
         val safeBrighter = sanitizeLinearLuma(brighter).coerceAtLeast(LUMA_FLOOR)
         val safeDarker = sanitizeLinearLuma(darker).coerceAtLeast(1e-5f)
@@ -312,8 +457,12 @@ object MeteringSystem {
         }
     }
 
-    private fun resolveDisplayTargetLuma(meteringCompensationEv: Float): Float {
-        return DISPLAY_TARGET_LUMA * exp2(-sanitizeMeteringCompensationEv(meteringCompensationEv))
+    private fun sanitizeExposureEv(ev: Float): Float {
+        return if (ev.isFinite()) {
+            ev.coerceIn(-MAX_METERING_COMPENSATION_EV, MAX_METERING_COMPENSATION_EV)
+        } else {
+            0f
+        }
     }
 
     private fun sanitizeMeteringCompensationEv(meteringCompensationEv: Float): Float {
@@ -324,19 +473,4 @@ object MeteringSystem {
         }
     }
 
-    private fun lerp(start: Float, end: Float, fraction: Float): Float {
-        return start + (end - start) * fraction.coerceIn(0f, 1f)
-    }
-
-    private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
-        if (!edge0.isFinite() || !edge1.isFinite() || !x.isFinite()) {
-            return 0f
-        }
-        val width = edge1 - edge0
-        if (kotlin.math.abs(width) < 0.000001f) {
-            return if (x >= edge1) 1f else 0f
-        }
-        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
-        return t * t * (3f - 2f * t)
-    }
 }

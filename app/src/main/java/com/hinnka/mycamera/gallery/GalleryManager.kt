@@ -1819,6 +1819,7 @@ object GalleryManager {
                 rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
                 rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
+                capturePreviewThumbnail = thumbnail,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2543,7 +2544,8 @@ object GalleryManager {
         superResolutionScale: Float = 1.0f,
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
-        exportDngWithRawExport: Boolean = false
+        exportDngWithRawExport: Boolean = false,
+        capturePreviewThumbnail: Bitmap? = null
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -2684,6 +2686,7 @@ object GalleryManager {
                 rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
                 rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
+                capturePreviewThumbnail = capturePreviewThumbnail,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2798,7 +2801,8 @@ object GalleryManager {
         photoQuality: Int = 95,
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
-        exportDngWithRawExport: Boolean = false
+        exportDngWithRawExport: Boolean = false,
+        capturePreviewThumbnail: Bitmap? = null
     ): Boolean = withContext(Dispatchers.IO) {
         var rawHdrStackResult: com.hinnka.mycamera.processor.RawStackResult? = null
         val imagesToClose = images.toMutableSet()
@@ -2976,7 +2980,8 @@ object GalleryManager {
                     noiseReductionValue = noiseReductionValue,
                     chromaNoiseReductionValue = chromaNoiseReductionValue,
                     photoQuality = photoQuality,
-                    shouldAutoSave = shouldAutoSave
+                    shouldAutoSave = shouldAutoSave,
+                    capturePreviewThumbnail = capturePreviewThumbnail
                 )
                 PLog.d(TAG, "RAW HDR denoise DNG saved: $photoId")
                 return@withContext true
@@ -3058,6 +3063,7 @@ object GalleryManager {
         chromaNoiseReductionValue: Float,
         photoQuality: Int,
         shouldAutoSave: Boolean,
+        capturePreviewThumbnail: Bitmap? = null,
     ) {
         val photoDir = getPhotoDir(context, photoId, true)
         val photoFile = File(photoDir, PHOTO_FILE)
@@ -3090,6 +3096,7 @@ object GalleryManager {
             rawRenderingEngine = updatedMetadata.rawRenderingEngine,
             rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
             rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
+            capturePreviewThumbnail = capturePreviewThumbnail,
             spectralFilmStock = updatedMetadata.spectralFilmStock,
             spectralFilmPrint = updatedMetadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
@@ -3312,7 +3319,8 @@ object GalleryManager {
         superResolutionScale: Float = 1.0f,
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
-        exportDngWithRawExport: Boolean = false
+        exportDngWithRawExport: Boolean = false,
+        capturePreviewThumbnail: Bitmap? = null
     ) = withContext(Dispatchers.IO) {
         when (val format = images[0].format) {
             ImageFormat.YUV_420_888, ImageFormat.YCBCR_P010, ImageFormat.NV21 -> {
@@ -3353,7 +3361,8 @@ object GalleryManager {
                     superResolutionScale,
                     useGpuAcceleration,
                     exposureBias,
-                    exportDngWithRawExport
+                    exportDngWithRawExport,
+                    capturePreviewThumbnail
                 )
             }
 
