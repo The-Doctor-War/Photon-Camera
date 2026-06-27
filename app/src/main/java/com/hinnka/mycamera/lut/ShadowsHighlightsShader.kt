@@ -29,7 +29,7 @@ object ShadowsHighlightsShader {
         const float SH_COMPRESS = 0.5;
         const float SH_HIGHLIGHTS_COLOR_ADJUSTMENT = 0.6;
         const float SH_SHADOWS_COLOR_ADJUSTMENT = 1.0;
-        const float SH_RANGE_SIGMA = 0.18;
+        const float SH_RANGE_SIGMA = 0.105;
         const float SH_RANGE_SIGMA2 = SH_RANGE_SIGMA * SH_RANGE_SIGMA;
 
         float shSanitizeFloat(float value) {
@@ -94,7 +94,7 @@ object ShadowsHighlightsShader {
         float shTonalRangeWeight(float sampleL, float centerL) {
             float delta = sampleL - centerL;
             float bilateral = exp(-(delta * delta) / max(2.0 * SH_RANGE_SIGMA2, SH_LOW_APPROX));
-            float edgeStop = 1.0 - smoothstep(0.20, 0.38, abs(delta));
+            float edgeStop = 1.0 - smoothstep(0.12, 0.24, abs(delta));
             return bilateral * edgeStop;
         }
 
@@ -123,48 +123,62 @@ object ShadowsHighlightsShader {
 
         float shSampleBaseL(vec2 uv, vec3 centerLab) {
             float centerL = centerLab.x;
-            float sum = centerL * 0.36;
-            float weightSum = 0.36;
+            float sum = centerL * 0.48;
+            float weightSum = 0.48;
 
-            shAddBaseSamplePair(uv, shPixelOffset(3.5, 1.25), centerL, 0.105, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(-1.75, 4.25), centerL, 0.105, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(5.75, -3.25), centerL, 0.09, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(-4.25, -5.75), centerL, 0.09, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(2.5, 1.5), centerL, 0.11, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-1.5, 3.5), centerL, 0.11, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(4.5, -2.5), centerL, 0.10, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-4.5, -3.5), centerL, 0.10, sum, weightSum);
 
-            shAddBaseSamplePair(uv, shPixelOffset(12.5, 27.5), centerL, 0.06, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(-30.5, 16.5), centerL, 0.055, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(39.5, -13.5), centerL, 0.05, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(7.5, 4.5), centerL, 0.065, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-6.5, 8.5), centerL, 0.06, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(10.5, -7.5), centerL, 0.055, sum, weightSum);
 
-            shAddBaseSamplePair(uv, shPixelOffset(73.5, 86.5), centerL, 0.024, sum, weightSum);
-            shAddBaseSamplePair(uv, shPixelOffset(-108.5, 47.5), centerL, 0.024, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(15.5, 11.5), centerL, 0.035, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-18.5, 5.5), centerL, 0.03, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(22.5, -13.5), centerL, 0.026, sum, weightSum);
 
             return sum / max(weightSum, 0.0001);
         }
 
+        float shOverlayBlendAmount(float opacity, float transform) {
+            float opacity2 = min(opacity * opacity, 4.0);
+            float safeTransform = clamp(transform, 0.0, 1.0);
+            return opacity2 * safeTransform;
+        }
+
         vec3 shOverlay(vec3 a, vec3 b, float opacity, float transform, float ccorrect) {
-            float opacity2 = opacity * opacity;
-            for (int i = 0; i < 4; i++) {
-                if (opacity2 <= 0.0) break;
-
-                float la = a.x;
-                float lb = (b.x - 0.5) * shSign(opacity) * shSign(1.0 - la) + 0.5;
-                lb = clamp(lb, 0.0, 1.0);
-                float lref = shSignedInv(la, la);
-                float href = shSignedInv(1.0 - la, 1.0 - la);
-
-                float chunk = opacity2 > 1.0 ? 1.0 : opacity2;
-                float optrans = chunk * transform;
-                opacity2 -= 1.0;
-
-                float overL = la > 0.5
-                    ? 1.0 - (1.0 - 2.0 * (la - 0.5)) * (1.0 - lb)
-                    : 2.0 * la * lb;
-                a.x = la * (1.0 - optrans) + overL * optrans;
-
-                float chromaFactor = a.x * lref * ccorrect + (1.0 - a.x) * href * (1.0 - ccorrect);
-                a.y = a.y * (1.0 - optrans) + (a.y + b.y) * chromaFactor * optrans;
-                a.z = a.z * (1.0 - optrans) + (a.z + b.z) * chromaFactor * optrans;
+            float optrans = shOverlayBlendAmount(opacity, transform);
+            if (optrans <= 0.0) {
+                return a;
             }
+
+            float la = a.x;
+            float lb = (b.x - 0.5) * shSign(opacity) * shSign(1.0 - la) + 0.5;
+            lb = clamp(lb, 0.0, 1.0);
+            float lref = shSignedInv(la, la);
+            float href = shSignedInv(1.0 - la, 1.0 - la);
+
+            float overL = la > 0.5
+                ? 1.0 - (1.0 - 2.0 * (la - 0.5)) * (1.0 - lb)
+                : 2.0 * la * lb;
+            float deltaL = overL - la;
+            float nextL = la + deltaL * optrans;
+            float anchorDelta = lb - la;
+            if (deltaL * anchorDelta > 0.0) {
+                nextL = deltaL < 0.0
+                    ? max(nextL, min(la, lb))
+                    : min(nextL, max(la, lb));
+            }
+            a.x = clamp(nextL, 0.0, 1.0);
+
+            float chromaFactor = a.x * lref * ccorrect + (1.0 - a.x) * href * (1.0 - ccorrect);
+            float chromaTrans = abs(deltaL) > SH_LOW_APPROX
+                ? clamp((a.x - la) / deltaL, 0.0, 1.0)
+                : clamp(optrans, 0.0, 1.0);
+            a.y = a.y * (1.0 - chromaTrans) + (a.y + b.y) * chromaFactor * chromaTrans;
+            a.z = a.z * (1.0 - chromaTrans) + (a.z + b.z) * chromaFactor * chromaTrans;
             return a;
         }
 
@@ -176,7 +190,7 @@ object ShadowsHighlightsShader {
             }
 
             vec3 lab = shRgbToLabScaled(inputColor);
-            float baseL = shSampleBaseL(uv, lab);
+            float baseL = clamp(shSampleBaseL(uv, lab), 0.0, 1.0);
             vec3 maskLab = vec3(1.0 - baseL, 0.0, 0.0);
             float compressDenom = max(1.0 - SH_COMPRESS, 0.0001);
 

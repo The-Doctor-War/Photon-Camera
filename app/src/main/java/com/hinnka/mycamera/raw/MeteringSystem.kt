@@ -31,7 +31,7 @@ object MeteringSystem {
     private const val HIGHLIGHT_COMPRESSION_AMOUNT_FULL = 0.18f
     private const val HIGHLIGHT_COMPRESSION_STRENGTH_MIN = 0.32f
     private const val HIGHLIGHT_COMPRESSION_STRENGTH_FULL = 0.86f
-    private const val AUTO_HIGHLIGHTS_MAX_REDUCTION = 0.95f
+    private const val AUTO_HIGHLIGHTS_MAX_REDUCTION = 0.8f
 
     data class MeteringResult(
         val meteredEv: Float,
